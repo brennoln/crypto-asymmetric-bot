@@ -483,8 +483,10 @@ class TelemetryDashboard:
             <h1><span class="pulse"></span> Asymmetric Momentum Engine — Telemetria v0.8</h1>
             <div class="header-meta">Convex Holding Map & Anti-Cabal Quantitative Engine</div>
         </div>
-        <div class="header-meta">
-            Uptime: <strong>{uptime_str}</strong> | Atualização síncrona: <strong>2s</strong>
+        <div class="header-meta" style="display: flex; align-items: center; gap: 10px;">
+            <span id="bot-status-pill" class="badge badge-rf">VERIFICANDO...</span>
+            <span>Uptime: <strong>{uptime_str}</strong></span>
+            <span>Taxa: <strong>2s</strong></span>
         </div>
     </header>
 
@@ -556,8 +558,35 @@ class TelemetryDashboard:
             localStorage.setItem('open_pool_rows', JSON.stringify(openTokens));
         }}
 
-        // Restaura gavetas abertas após o reload da página
+        // Restaura gavetas abertas e checa se o bot está online
+        const generatedTs = {int(now)};
+        function updateHeartbeat() {{
+            const ageSec = Math.floor(Date.now() / 1000 - generatedTs);
+            const statusPill = document.getElementById('bot-status-pill');
+            const pulse = document.querySelector('.pulse');
+            if (ageSec > 6) {{
+                if (statusPill) {{
+                    statusPill.textContent = '🔴 BOT OFFLINE / PAUSADO';
+                    statusPill.className = 'badge badge-blocked';
+                }}
+                if (pulse) {{
+                    pulse.style.background = 'var(--red)';
+                    pulse.style.boxShadow = '0 0 8px var(--red)';
+                }}
+            }} else {{
+                if (statusPill) {{
+                    statusPill.textContent = '🟢 BOT ATIVO & CONECTADO';
+                    statusPill.className = 'badge badge-rf';
+                }}
+                if (pulse) {{
+                    pulse.style.background = 'var(--green)';
+                    pulse.style.boxShadow = '0 0 8px var(--green)';
+                }}
+            }}
+        }}
+
         window.addEventListener('DOMContentLoaded', () => {{
+            updateHeartbeat();
             try {{
                 const openTokens = JSON.parse(localStorage.getItem('open_pool_rows') || '[]');
                 openTokens.forEach(id => {{
@@ -573,12 +602,6 @@ class TelemetryDashboard:
     </script>
 </body>
 </html>"""
-
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(html_content)
-
-        return output_path
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:

@@ -83,6 +83,24 @@ class DatabaseManager:
                     pass
 
             await db.commit()
+        await self.cleanup_stale_open_trades()
+
+    async def cleanup_stale_open_trades(self):
+        """Encerra com segurança ordens órfãs deixadas com status OPEN de sessões anteriores."""
+        async with self._connect() as db:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            await db.execute(
+                """
+                UPDATE trade_records
+                SET status = 'DROPPED',
+                    closed_at = ?,
+                    exit_reason = 'Sessão anterior finalizada (Reinicialização)',
+                    hold_duration_sec = COALESCE(hold_duration_sec, 1200.0)
+                WHERE status = 'OPEN'
+                """,
+                (now_iso,),
+            )
+            await db.commit()
 
     async def log_tick(
         self,
