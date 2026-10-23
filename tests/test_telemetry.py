@@ -94,3 +94,31 @@ def test_telemetry_generate_html(tmp_path):
     assert "GEM" in html_text
     assert "BADCOIN" in html_text
     assert "Telemetria v0.8" in html_text
+
+
+def test_telemetry_with_iso_opened_at_and_token_symbol(tmp_path):
+    dashboard = TelemetryDashboard()
+    positions = [
+        {
+            "token_symbol": "YUMI",
+            "opened_at": "2026-10-23T09:30:15.123456+00:00",
+            "opened_timestamp": 1700000000.0,
+            "entry_price": 0.00016899,
+            "current_price": 0.00017800,
+            "remaining_amount": 88764.19,
+            "invested_usd": 15.0,
+            "realized_pnl_usd": 0.0,
+            "status": "OPEN",
+            "executed_targets": set(),
+        }
+    ]
+    client = MockExecutionClient(positions=positions)
+    term_view = dashboard.format_terminal_view(client, MockRiskManager())
+    assert "YUMI" in term_view
+
+    out_file = str(tmp_path / "dashboard_iso.html")
+    res = dashboard.generate_html_dashboard(client, MockRiskManager(), output_path=out_file)
+    assert os.path.exists(res)
+    with open(res, "r", encoding="utf-8") as f:
+        html_text = f.read()
+    assert "YUMI" in html_text

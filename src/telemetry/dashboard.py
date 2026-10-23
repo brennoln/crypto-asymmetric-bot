@@ -47,6 +47,37 @@ class TelemetryDashboard:
         if len(self.blocked_events) > self.max_audit_logs:
             self.blocked_events.pop(0)
 
+    @staticmethod
+    def _calc_hold_min(p: Dict[str, Any], now: float) -> float:
+        """Calcula o tempo em carteira suportando float epoch ou string ISO/UTC."""
+        opened_ts = p.get("opened_timestamp")
+        if opened_ts is not None and isinstance(opened_ts, (int, float)):
+            return max(0.0, (now - float(opened_ts)) / 60.0)
+        opened_at = p.get("opened_at")
+        if isinstance(opened_at, (int, float)):
+            return max(0.0, (now - float(opened_at)) / 60.0)
+        if isinstance(opened_at, str):
+            try:
+                # Normaliza ISO string
+                clean_iso = opened_at.replace("Z", "+00:00")
+                dt = datetime.datetime.fromisoformat(clean_iso)
+                return max(0.0, (now - dt.timestamp()) / 60.0)
+            except Exception:
+                pass
+        return 0.0
+
+    @staticmethod
+    def _calc_pnl(p: Dict[str, Any]) -> float:
+        """Calcula o PnL não-realizado de forma segura."""
+        if "unrealized_pnl_usd" in p and p["unrealized_pnl_usd"] is not None:
+            return float(p["unrealized_pnl_usd"])
+        rem = float(p.get("remaining_amount", 0.0) or 0.0)
+        entry = float(p.get("entry_price", 0.0) or 0.0)
+        curr = float(p.get("current_price", entry) or entry)
+        real = float(p.get("realized_pnl_usd", 0.0) or 0.0)
+        inv = float(p.get("invested_usd", 0.0) or 0.0)
+        return (rem * curr) + real - inv
+
     def format_terminal_view(
         self,
         execution_client: Any,
@@ -57,10 +88,11 @@ class TelemetryDashboard:
         uptime_str = f"{uptime_sec // 3600:02d}:{(uptime_sec % 3600) // 60:02d}:{uptime_sec % 60:02d}"
 
         positions = getattr(execution_client, "positions", [])
-        total_open = len(positions)
+        open_positions = [p for p in positions if p.get("status", "OPEN") == "OPEN"]
+        total_open = len(open_positions)
         max_slots = getattr(risk_manager, "max_active_positions", 10) if risk_manager else 10
 
-        unrealized_pnl = sum(p.get("unrealized_pnl_usd", 0.0) for p in positions)
+        unrealized_pnl = sum(self._calc_pnl(p) for p in open_positions)
         realized_pnl = getattr(execution_client, "total_realized_pnl_usd", 0.0)
         gas_paid = getattr(execution_client, "total_gas_paid_usd", 0.0)
         net_balance = realized_pnl + unrealized_pnl - gas_paid
@@ -76,7 +108,7 @@ class TelemetryDashboard:
             sub_sep,
         ]
 
-        if not positions:
+        if not open_positions:
             lines.append("  [Nenhuma posição aberta no momento - Varredor ativo]")
         else:
             lines.append(
@@ -84,15 +116,20 @@ class TelemetryDashboard:
             )
             lines.append(f"  {'-'*76}")
             now = time.time()
-            for p in positions:
-                sym = p.get("symbol", "N/A")[:9]
-                hold_min = (now - p.get("opened_at", now)) / 60.0
-                entry_p = p.get("entry_price", 0.0)
-                curr_p = p.get("current_price", entry_p)
-                mult = p.get("current_multiplier", 1.0)
-                peak = p.get("peak_multiplier", 1.0)
-                stop = p.get("stop_multiplier", 0.65)
-                pnl = p.get("unrealized_pnl_usd", 0.0)
+            for p in open_positions:
+                sym = str(p.get("token_symbol") or p.get("symbol") or "N/A")[:9]
+                hold_min = self._calc_hold_min(p, now)
+                entry_p = float(p.get("entry_price", 0.0) or 0.0)
+                curr_p = float(p.get("current_price", entry_p) or entry_p)
+                mult = p.get("current_multiplier")
+                if mult is None:
+                    mult = (curr_p / entry_p) if entry_p > 0 else 1.0
+                peak = p.get("peak_multiplier")
+                if peak is None:
+                    peak_p = float(p.get("peak_price", entry_p) or entry_p)
+                    peak = (peak_p / entry_p) if entry_p > 0 else 1.0
+                stop = float(p.get("stop_multiplier", 0.65) or 0.65)
+                pnl = self._calc_pnl(p)
                 risk_free = "RISK-FREE" if (p.get("is_risk_free") or len(p.get("executed_targets", set())) > 0) else "RUNNING"
 
                 lines.append(
@@ -122,10 +159,11 @@ class TelemetryDashboard:
         uptime_str = f"{uptime_sec // 3600:02d}:{(uptime_sec % 3600) // 60:02d}:{uptime_sec % 60:02d}"
 
         positions = getattr(execution_client, "positions", [])
-        total_open = len(positions)
+        open_positions = [p for p in positions if p.get("status", "OPEN") == "OPEN"]
+        total_open = len(open_positions)
         max_slots = getattr(risk_manager, "max_active_positions", 10) if risk_manager else 10
 
-        unrealized_pnl = sum(p.get("unrealized_pnl_usd", 0.0) for p in positions)
+        unrealized_pnl = sum(self._calc_pnl(p) for p in open_positions)
         realized_pnl = getattr(execution_client, "total_realized_pnl_usd", 0.0)
         gas_paid = getattr(execution_client, "total_gas_paid_usd", 0.0)
         net_balance = realized_pnl + unrealized_pnl - gas_paid
@@ -133,15 +171,20 @@ class TelemetryDashboard:
         # Gera linhas da tabela de posições
         now = time.time()
         pos_rows = []
-        for p in positions:
-            sym = html.escape(str(p.get("symbol", "N/A")))
-            hold_min = (now - p.get("opened_at", now)) / 60.0
-            entry_p = p.get("entry_price", 0.0)
-            curr_p = p.get("current_price", entry_p)
-            mult = p.get("current_multiplier", 1.0)
-            peak = p.get("peak_multiplier", 1.0)
-            stop = p.get("stop_multiplier", 0.65)
-            pnl = p.get("unrealized_pnl_usd", 0.0)
+        for p in open_positions:
+            sym = html.escape(str(p.get("token_symbol") or p.get("symbol") or "N/A"))
+            hold_min = self._calc_hold_min(p, now)
+            entry_p = float(p.get("entry_price", 0.0) or 0.0)
+            curr_p = float(p.get("current_price", entry_p) or entry_p)
+            mult = p.get("current_multiplier")
+            if mult is None:
+                mult = (curr_p / entry_p) if entry_p > 0 else 1.0
+            peak = p.get("peak_multiplier")
+            if peak is None:
+                peak_p = float(p.get("peak_price", entry_p) or entry_p)
+                peak = (peak_p / entry_p) if entry_p > 0 else 1.0
+            stop = float(p.get("stop_multiplier", 0.65) or 0.65)
+            pnl = self._calc_pnl(p)
             is_rf = p.get("is_risk_free") or len(p.get("executed_targets", set())) > 0
             badge_class = "badge-rf" if is_rf else "badge-open"
             badge_text = "RISK-FREE" if is_rf else "ACTIVE"
