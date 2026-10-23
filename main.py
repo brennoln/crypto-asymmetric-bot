@@ -237,7 +237,37 @@ async def position_watcher(
                         else:
                             stop_confirmation_counts[token_addr] = 0
 
-                        # 3. Realização de Alvos Parciais do Holding Map (Checado antes do Trailing Stop)
+                        # 3a. Cobertura Automática de Custos de Taxa ao atingir R$ 6,00 de lucro
+                        if (
+                            settings.ENABLE_FEE_COVER_PROFIT
+                            and not trade.get("fee_cover_executed")
+                            and trade["status"] == "OPEN"
+                        ):
+                            gross_val_usd = trade["remaining_amount"] * current_price
+                            cost_basis_usd = trade["remaining_amount"] * trade["entry_price"]
+                            unrealized_profit_brl = (gross_val_usd - cost_basis_usd) * settings.USD_BRL_RATE
+                            if unrealized_profit_brl >= settings.FEE_COVER_PROFIT_TRIGGER_BRL:
+                                target_rec_usd = settings.FEE_COVER_AMOUNT_BRL / settings.USD_BRL_RATE
+                                needed_pct = target_rec_usd / max(0.01, gross_val_usd)
+                                sell_pct = min(settings.FEE_COVER_MAX_SELL_PCT, max(0.02, needed_pct))
+                                trade["fee_cover_executed"] = True
+                                log.info(
+                                    f"🛡️ [COBERTURA DE TAXAS] {trade['token_symbol']} atingiu +R$ {unrealized_profit_brl:.2f} de lucro! "
+                                    f"Vendendo {sell_pct * 100:.1f}% para recuperar R$ {settings.FEE_COVER_AMOUNT_BRL:.2f} de custos de transação."
+                                )
+                                await execution_client.execute_partial_sell(
+                                    trade=trade,
+                                    multiplier=ratio,
+                                    sell_pct=sell_pct,
+                                    current_price=current_price,
+                                    current_liq=current_liq,
+                                    custom_label="COBERTURA DE TAXAS (LUCRO R$ 6)",
+                                )
+
+                        if trade["status"] != "OPEN":
+                            continue
+
+                        # 3b. Realização de Alvos Parciais do Holding Map (Checado antes do Trailing Stop)
                         for target in holding_map.targets:
                             if trade["status"] != "OPEN":
                                 break

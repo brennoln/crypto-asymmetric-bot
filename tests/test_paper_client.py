@@ -286,3 +286,41 @@ async def test_execution_applies_lp_swap_fee_when_configured(temp_db):
     expected_exec = 1.0 * (1.0 + expected_impact) * 1.003
     assert trade["entry_price"] == pytest.approx(expected_exec, rel=1e-4)
     assert trade["initial_liquidity_usd"] == 100_000.0
+
+
+async def test_realized_pnl_exact_accounting_matches_cash(temp_db):
+    await db_manager.init_db()
+    client = PaperExecutionClient(
+        initial_capital_usd=100.0,
+        gas_fee_usd=0.15,
+        enable_price_impact=False,
+    )
+    # Abre posição de $10 -> Caixa deve cair para 100 - (10 + 0.15) = 89.85
+    trade = await client.open_position(_candidate(price_usd=1.0), token_amount=10.0, invested_usd=10.0)
+    assert client.cash_usd == pytest.approx(89.85)
+
+    # Vende com prejuízo a $0.80 (recupera $8.00 - $0.15 gás = $7.85)
+    await client.drop_dead_position(trade, reason="Stop Loss", current_price=0.80)
+    # Caixa após venda: 89.85 + 7.85 = 97.70
+    assert client.cash_usd == pytest.approx(97.70)
+    # PnL líquido realizado: $7.85 - $10.15 = -$2.30
+    assert client.total_realized_pnl_usd == pytest.approx(-2.30)
+    # Saldo em caixa = inicial ($100) + PnL Líquido (-$2.30) = $97.70
+    assert client.cash_usd == pytest.approx(client.initial_capital_usd + client.total_realized_pnl_usd)
+
+
+async def test_partial_sell_custom_label(temp_db):
+    await db_manager.init_db()
+    client = PaperExecutionClient(initial_capital_usd=50.0, gas_fee_usd=0.10, enable_price_impact=False)
+    trade = await client.open_position(_candidate(price_usd=1.0), token_amount=10.0, invested_usd=10.0)
+
+    # Venda parcial de 10% com custom_label
+    await client.execute_partial_sell(
+        trade=trade,
+        multiplier=1.5,
+        sell_pct=0.10,
+        current_price=1.5,
+        custom_label="COBERTURA DE TAXAS",
+    )
+    assert trade["remaining_amount"] == pytest.approx(9.0)
+    assert 1.5 in trade["executed_targets"]

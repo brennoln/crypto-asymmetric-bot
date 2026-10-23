@@ -15,11 +15,11 @@ def test_targets_are_sorted_by_multiplier():
     assert multipliers == sorted(multipliers)
 
 
-def test_first_target_is_the_two_x_de_risking_step():
+def test_first_target_is_the_one_point_five_x_de_risking_step():
     first_target = HoldingMap().targets[0]
 
-    assert first_target.multiplier == pytest.approx(2.0)
-    assert first_target.sell_percent == pytest.approx(0.35)
+    assert first_target.multiplier == pytest.approx(1.5)
+    assert first_target.sell_percent == pytest.approx(0.10)
 
 
 def test_last_target_is_the_asymmetric_moonbag():
@@ -37,13 +37,13 @@ def test_evaluate_exit_is_empty_for_a_non_positive_entry_price():
 
 
 def test_evaluate_exit_is_empty_below_the_first_target():
-    assert HoldingMap().evaluate_exit(entry_price=1.0, current_price=1.9) == []
+    assert HoldingMap().evaluate_exit(entry_price=1.0, current_price=1.4) == []
 
 
 def test_evaluate_exit_reports_every_reached_target():
     actions = HoldingMap().evaluate_exit(entry_price=1.0, current_price=12.0)
 
-    assert len(actions) == 2  # 2.0x e 5.0x
+    assert len(actions) == 3  # 1.5x, 2.0x e 5.0x
 
 
 def test_evaluate_exit_reports_all_targets_on_a_full_parabolic_run():

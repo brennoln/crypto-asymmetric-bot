@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     BREAKEVEN_PULLBACK_DROP: float = 0.15    # Recuo de 15% a partir do pico intermediário trava lucro
     BREAKEVEN_FLOOR_RATIO: float = 1.02      # Stop no Breakeven (+2% cobre custos de taxas de entrada e saída)
 
+    # Cobertura Automática de Custos de Taxa e Alvos Antecipados (v0.8.6)
+    ENABLE_FEE_COVER_PROFIT: bool = True       # Vende fatia para cobrir taxas ao bater meta de lucro
+    FEE_COVER_PROFIT_TRIGGER_BRL: float = 6.00 # Dispara quando lucro não-realizado da moeda atinge R$ 6,00
+    FEE_COVER_AMOUNT_BRL: float = 0.60         # Montante em R$ a recuperar para cobrir custos de compra/venda
+    FEE_COVER_MAX_SELL_PCT: float = 0.20       # Limite de no máximo 20% da moeda para cobertura de taxas
+
     # Detecção Invariante de Remoção de Liquidez (Soft-Rug) (v0.5)
     ENABLE_INVARIANT_ANTI_RUG: bool = True
     MIN_INVARIANT_LIQUIDITY_RATIO: float = 0.85 # Queda > 15% na constante k acusa remoção silenciosa de LP

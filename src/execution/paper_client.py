@@ -36,7 +36,7 @@ class PaperExecutionClient:
         )
         self.cash_usd = self.initial_capital_usd
         self.total_gas_paid_usd = 0.0
-        self.total_realized_pnl_usd = 0.0
+        self._manual_realized_pnl: float | None = None
 
     @property
     def cash_brl(self) -> float:
@@ -77,6 +77,27 @@ class PaperExecutionClient:
     @property
     def virtual_equity_brl(self) -> float:
         return self.virtual_equity_usd * settings.USD_BRL_RATE
+
+    @property
+    def total_realized_pnl_usd(self) -> float:
+        """Soma rigorosa do PnL Líquido Realizado (já deduzidas todas as taxas de compra, venda e gás)."""
+        if self._manual_realized_pnl is not None:
+            return self._manual_realized_pnl
+        closed_trades = [p for p in self.positions if p.get("status") != "OPEN"]
+        closed_net = sum(float(p.get("net_pnl_usd", 0.0) or 0.0) for p in closed_trades)
+        open_partial_net = 0.0
+        for p in self.positions:
+            if p.get("status") == "OPEN" and len(p.get("executed_targets", set())) > 0:
+                recovered = float(p.get("realized_pnl_usd", 0.0) or 0.0)
+                sold_tokens = float(p.get("initial_amount", 0.0) or 0.0) - float(p.get("remaining_amount", 0.0) or 0.0)
+                sold_cost = sold_tokens * float(p.get("entry_price", 0.0) or 0.0)
+                exit_gas = len(p.get("executed_targets", set())) * self.gas_fee_usd
+                open_partial_net += (recovered - sold_cost - exit_gas)
+        return closed_net + open_partial_net
+
+    @total_realized_pnl_usd.setter
+    def total_realized_pnl_usd(self, val: float) -> None:
+        self._manual_realized_pnl = float(val)
 
     @property
     def total_realized_pnl_brl(self) -> float:
@@ -226,6 +247,7 @@ class PaperExecutionClient:
         sell_pct: float,
         current_price: float,
         current_liq: float = 0.0,
+        custom_label: str | None = None,
     ):
         """Executa a liquidação parcial programada pelo Holding Map considerando fricção."""
         tokens_to_sell = min(trade["initial_amount"] * sell_pct, trade["remaining_amount"])
@@ -247,12 +269,12 @@ class PaperExecutionClient:
         exit_gas = self.gas_fee_usd
         self.total_gas_paid_usd += exit_gas
         self.cash_usd += max(0.0, revenue_usd - exit_gas)
-        self.total_realized_pnl_usd += (revenue_usd - (tokens_to_sell * trade["entry_price"]))
 
         net_so_far = self._net_pnl(trade)
+        tag = custom_label or f"TAKE PROFIT {multiplier:.1f}x"
         log.info(
-            f"💰 [TAKE PROFIT {multiplier:.1f}x] {trade['token_symbol']} atingiu {multiplier:.1f}x! "
-            f"Vendido {sell_pct * 100:.0f}% ({tokens_to_sell:,.2f} tokens) por ${revenue_usd:.2f} "
+            f"💰 [{tag}] {trade['token_symbol']} | "
+            f"Vendido {sell_pct * 100:.1f}% ({tokens_to_sell:,.2f} tokens) por ${revenue_usd:.2f} "
             f"(Impacto: -{sell_impact * 100:.2f}% | Gás: ${exit_gas:.2f}) | "
             f"Caixa Livre: ${self.cash_usd:.2f} (R$ {self.cash_brl:.2f}) | "
             f"PnL Líquido até agora: ${net_so_far:+.2f}"
@@ -312,7 +334,6 @@ class PaperExecutionClient:
         exit_gas = self.gas_fee_usd
         self.total_gas_paid_usd += exit_gas
         self.cash_usd += max(0.0, recovered_usd - exit_gas)
-        self.total_realized_pnl_usd += (recovered_usd - (remaining * trade["entry_price"]))
 
         duration_sec = trade["duration_sec"]
         await db_manager.close_trade(
@@ -363,7 +384,6 @@ class PaperExecutionClient:
         exit_gas = self.gas_fee_usd
         self.total_gas_paid_usd += exit_gas
         self.cash_usd += max(0.0, recovered_usd - exit_gas)
-        self.total_realized_pnl_usd += (recovered_usd - (remaining * trade["entry_price"]))
 
         duration_sec = trade["duration_sec"]
         await db_manager.close_trade(trade, exit_reason=reason, duration_sec=duration_sec)

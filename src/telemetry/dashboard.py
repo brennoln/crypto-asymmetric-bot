@@ -271,6 +271,8 @@ class TelemetryDashboard:
             ofi_label = "Pressão Compradora (Agressores Ativos)" if ofi > 0 else ("Pressão Vendedora" if ofi < 0 else "Neutro")
             ofi_color = "var(--green)" if ofi > 0 else ("var(--red)" if ofi < 0 else "var(--text-dim)")
 
+            t_fee = "✅ PAGO" if p.get("fee_cover_executed") else "⏳ AGUARDA +R$ 6"
+            t1_5 = "✅ ATINGIDO" if 1.5 in executed_targets else "⏳ PENDENTE"
             t2 = "✅ ATINGIDO" if 2.0 in executed_targets else "⏳ PENDENTE"
             t5 = "✅ ATINGIDO" if 5.0 in executed_targets else "⏳ PENDENTE"
             t15 = "✅ ATINGIDO" if 15.0 in executed_targets else "⏳ PENDENTE"
@@ -331,14 +333,24 @@ class TelemetryDashboard:
 
                             <div class="ladder-title">🎯 Escada Convexa de Desrisco & Saídas (Holding Map)</div>
                             <div class="ladder-grid">
+                                <div class="ladder-step {'step-done' if '✅' in t_fee else ''}">
+                                    <span class="step-target">🛡️ Cobertura de Taxas</span>
+                                    <span class="step-desc">Ao bater R$ 6 lucro (recupera R$ 0,60)</span>
+                                    <span class="step-status">{t_fee}</span>
+                                </div>
+                                <div class="ladder-step {'step-done' if '✅' in t1_5 else ''}">
+                                    <span class="step-target">1.5x (Vender 10%)</span>
+                                    <span class="step-desc">Trava lucro antecipado</span>
+                                    <span class="step-status">{t1_5}</span>
+                                </div>
                                 <div class="ladder-step {'step-done' if '✅' in t2 else ''}">
-                                    <span class="step-target">2.0x (Vender 35%)</span>
-                                    <span class="step-desc">Recupera 70% Principal</span>
+                                    <span class="step-target">2.0x (Vender 30%)</span>
+                                    <span class="step-desc">Recupera 60% Principal (Risk-Free)</span>
                                     <span class="step-status">{t2}</span>
                                 </div>
                                 <div class="ladder-step {'step-done' if '✅' in t5 else ''}">
-                                    <span class="step-target">5.0x (Vender 30%)</span>
-                                    <span class="step-desc">Trava +120% Lucro Líquido</span>
+                                    <span class="step-target">5.0x (Vender 25%)</span>
+                                    <span class="step-desc">Trava +125% Lucro Líquido</span>
                                     <span class="step-status">{t5}</span>
                                 </div>
                                 <div class="ladder-step {'step-done' if '✅' in t15 else ''}">
@@ -348,7 +360,7 @@ class TelemetryDashboard:
                                 </div>
                                 <div class="ladder-step {'step-done' if '✅' in t50 else ''}">
                                     <span class="step-target">50.0x (Vender 15%)</span>
-                                    <span class="step-desc">Moonbag (+1170% Lucro)</span>
+                                    <span class="step-desc">Moonbag Assimétrica</span>
                                     <span class="step-status">{t50}</span>
                                 </div>
                             </div>
