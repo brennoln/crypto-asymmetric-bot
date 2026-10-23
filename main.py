@@ -611,22 +611,30 @@ async def main():
     # Gera visualização web inicial
     dashboard.generate_html_dashboard(execution_client, risk_engine)
 
-    async with aiohttp.ClientSession() as session:
-        tasks = asyncio.gather(
-            market_scanner(session, execution_client, risk_engine, dashboard=dashboard),
-            position_watcher(session, execution_client, holding_map, stat_strategy, dashboard=dashboard),
-        )
-        if args.duration > 0:
-            try:
-                await asyncio.wait_for(tasks, timeout=args.duration)
-            except asyncio.TimeoutError:
-                log.info(f"Duração programada de {args.duration}s finalizada com sucesso.")
-        else:
-            await tasks
+    try:
+        async with aiohttp.ClientSession() as session:
+            tasks = asyncio.gather(
+                market_scanner(session, execution_client, risk_engine, dashboard=dashboard),
+                position_watcher(session, execution_client, holding_map, stat_strategy, dashboard=dashboard),
+            )
+            if args.duration > 0:
+                try:
+                    await asyncio.wait_for(tasks, timeout=args.duration)
+                except asyncio.TimeoutError:
+                    log.info(f"Duração programada de {args.duration}s finalizada com sucesso.")
+            else:
+                await tasks
+    finally:
+        log.info("Limpando e resetando dashboard para o estado inicial...")
+        dashboard.reset_html_dashboard()
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        log.info("Bot finalizado pelo usuário.")
+        log.info("Bot finalizado pelo usuário. Dashboard limpo.")
+        try:
+            TelemetryDashboard().reset_html_dashboard()
+        except Exception:
+            pass

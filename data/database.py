@@ -27,7 +27,7 @@ class DatabaseManager:
     def _trade_id(trade: dict) -> str:
         return f"{trade['token_address']}_{trade['opened_at']}"
 
-    async def init_db(self):
+    async def init_db(self, clear_history: bool = True):
         """Inicializa as tabelas de séries temporais e execução de trades."""
         async with self._connect() as db:
             await db.execute("""
@@ -83,7 +83,13 @@ class DatabaseManager:
                     pass
 
             await db.commit()
-        await self.cleanup_stale_open_trades()
+        if clear_history:
+            async with self._connect() as db:
+                await db.execute("DELETE FROM trade_records;")
+                await db.execute("DELETE FROM market_ticks;")
+                await db.commit()
+        else:
+            await self.cleanup_stale_open_trades()
 
     async def cleanup_stale_open_trades(self):
         """Encerra com segurança ordens órfãs deixadas com status OPEN de sessões anteriores."""

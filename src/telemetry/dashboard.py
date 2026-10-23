@@ -178,6 +178,7 @@ class TelemetryDashboard:
         execution_client: Any,
         risk_manager: Any | None = None,
         output_path: str = "data/dashboard.html",
+        is_offline: bool = False,
     ) -> str:
         """Gera um arquivo HTML completo com métricas financeiras reais de corretora (BRL e USD)."""
         uptime_sec = int(time.time() - self.start_time)
@@ -357,14 +358,24 @@ class TelemetryDashboard:
             )
 
         if not pos_rows:
-            pos_table_content = '<tr><td colspan="10" class="text-muted text-center" style="padding: 24px;">Nenhuma posição aberta no momento. Scanner em busca de assimetria...</td></tr>'
+            empty_pos_msg = (
+                "Bot encerrado / offline. Nenhuma posição aberta no momento. Execute <code>python main.py</code> para começar uma nova sessão."
+                if is_offline
+                else "Nenhuma posição aberta no momento. Scanner em busca de assimetria..."
+            )
+            pos_table_content = f'<tr><td colspan="10" class="text-muted text-center" style="padding: 24px;">{empty_pos_msg}</td></tr>'
         else:
             pos_table_content = "\n".join(pos_rows)
 
         # Gera linhas do histórico de posições encerradas (vendas, stops, alvos realizados)
         closed_positions = [p for p in positions if p.get("status", "OPEN") != "OPEN"]
         if not closed_positions:
-            closed_table_content = '<tr><td colspan="8" class="text-muted text-center" style="padding: 24px;">Nenhuma moeda encerrada ainda nesta sessão. Conforme ocorrerem vendas, trailing stops e take-profits, o histórico completo aparecerá aqui.</td></tr>'
+            empty_closed_msg = (
+                "Histórico limpo. Pronto para a próxima sessão."
+                if is_offline
+                else "Nenhuma moeda encerrada ainda nesta sessão. Conforme ocorrerem vendas, trailing stops e take-profits, o histórico completo aparecerá aqui."
+            )
+            closed_table_content = f'<tr><td colspan="8" class="text-muted text-center" style="padding: 24px;">{empty_closed_msg}</td></tr>'
         else:
             closed_rows = []
             for p in reversed(closed_positions):
@@ -711,7 +722,7 @@ class TelemetryDashboard:
         }}
 
         // Restaura gavetas abertas e checa se o bot está online
-        const generatedTs = {int(now)};
+        const generatedTs = {0 if is_offline else int(now)};
         function updateHeartbeat() {{
             const ageSec = Math.floor(Date.now() / 1000 - generatedTs);
             const statusPill = document.getElementById('bot-status-pill');
@@ -760,6 +771,70 @@ class TelemetryDashboard:
             f.write(html_content)
 
         return output_path
+
+    def reset_html_dashboard(self, output_path: str = "data/dashboard.html") -> str:
+        """Limpa e reseta o dashboard para o estado inicial padrão de R$ 100,00 quando o bot é encerrado."""
+        initial_cap_usd = float(settings.INITIAL_CAPITAL_USD)
+
+        class CleanClient:
+            def __init__(self):
+                self.positions = []
+                self.total_realized_pnl_usd = 0.0
+                self.total_gas_paid_usd = 0.0
+                self.initial_capital_usd = initial_cap_usd
+                self.cash_usd = initial_cap_usd
+
+            @property
+            def cash_brl(self) -> float:
+                return self.cash_usd * settings.USD_BRL_RATE
+
+            @property
+            def equity_usd(self) -> float:
+                return self.cash_usd
+
+            @property
+            def equity_brl(self) -> float:
+                return self.equity_usd * settings.USD_BRL_RATE
+
+            @property
+            def virtual_equity_usd(self) -> float:
+                return self.cash_usd
+
+            @property
+            def virtual_equity_brl(self) -> float:
+                return self.virtual_equity_usd * settings.USD_BRL_RATE
+
+            @property
+            def total_realized_pnl_brl(self) -> float:
+                return 0.0
+
+            @property
+            def allocated_usd(self) -> float:
+                return 0.0
+
+            @property
+            def allocated_brl(self) -> float:
+                return 0.0
+
+            @property
+            def total_pnl_usd(self) -> float:
+                return 0.0
+
+            @property
+            def total_pnl_brl(self) -> float:
+                return 0.0
+
+            @property
+            def total_pnl_pct(self) -> float:
+                return 0.0
+
+        clean_client = CleanClient()
+        return self.generate_html_dashboard(
+            execution_client=clean_client,
+            risk_manager=None,
+            output_path=output_path,
+            is_offline=True,
+        )
 
 
 if __name__ == "__main__":
