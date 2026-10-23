@@ -12,11 +12,41 @@ class Settings(BaseSettings):
     POSITION_SIZE_USD: float = 15.0
     MAX_DAILY_LOSS_USD: float = 100.0
 
+    # Fricção Realista de Mercado (v0.3 / v0.5)
+    ENABLE_PRICE_IMPACT: bool = True        # Modela impacto de preço na curva AMM x * y = k
+    GAS_FEE_USD: float = 0.15               # Taxa de rede estimada por swap (Solana priority + base fee = ~$0.15)
+    LP_SWAP_FEE_PCT: float = 0.003          # Taxa de swap da pool AMM (0.30% padrão Uniswap/Raydium)
+
     # Capacidade do Portfólio e Rotação
     MAX_ACTIVE_POSITIONS: int = 10          # Limite de moedas simultâneas
-    MAX_HOLD_TIME_MINUTES: float = 6.0      # Tempo máximo sem tração antes de podar
+    MAX_HOLD_TIME_MINUTES: float = 20.0     # Tempo máximo de inércia antes de podar (20 min)
+    INERTIA_CHECK_MINUTES: float = 10.0     # Checagem de inércia: estagnação se Z-Score <= 0 e preço negativo por 10 min
     MIN_PROFIT_TO_EXTEND_TIME: float = 0.20 # +20% de lucro concede sobrevida à moeda
     WATCHER_INTERVAL_SEC: float = 4.0
+
+    # Parâmetros de Trailing Stop Monotônico e Contínuo (v0.5)
+    TRAILING_ACTIVATION_RATIO: float = 1.40 # Ativa regime pleno após +40% de alta
+    TRAILING_DROP_PRE_2X: float = 0.20      # Antes de dobrar: recuo de 20% do topo protege lucro (monotônico com Breakeven)
+    TRAILING_DROP_POST_2X: float = 0.50     # Após bater 2x (Risk-Free): permite 50% de retração para o runner buscar 5x e 25x
+
+    # Proteção de Breakeven e Trava Precoce de Lucro (v0.4)
+    ENABLE_BREAKEVEN_PROTECTION: bool = True
+    BREAKEVEN_ACTIVATION_RATIO: float = 1.15 # Ativa proteção quando o pico atinge +15%
+    BREAKEVEN_PULLBACK_DROP: float = 0.15    # Recuo de 15% a partir do pico intermediário trava lucro
+    BREAKEVEN_FLOOR_RATIO: float = 1.02      # Stop no Breakeven (+2% cobre custos de taxas de entrada e saída)
+
+    # Detecção Invariante de Remoção de Liquidez (Soft-Rug) (v0.5)
+    ENABLE_INVARIANT_ANTI_RUG: bool = True
+    MIN_INVARIANT_LIQUIDITY_RATIO: float = 0.85 # Queda > 15% na constante k acusa remoção silenciosa de LP
+
+    # Auditoria de Contrato e Segurança On-Chain (RugCheck + Anti-Honeypot + Anti-Cabal) (v0.4 / v0.6)
+    ENABLE_RUGCHECK_AUDIT: bool = True
+    RUGCHECK_API_URL: str = "https://api.rugcheck.xyz/v1/tokens"
+    MAX_RUGCHECK_SCORE: int = 2000           # Scores RugCheck acima de 2000 são considerados perigosos
+    MAX_DEV_HOLDING_PCT: float = 10.0        # Máximo % de suprimento na carteira criadora (dev)
+    MAX_SINGLE_HOLDER_PCT: float = 15.0      # Máximo % de suprimento em qualquer carteira individual não-pool
+    MAX_TOP10_HOLDERS_PCT: float = 30.0      # Máximo % de suprimento acumulado no Top 10 (excluindo pool de liquidez)
+    MAX_INSIDERS_PCT: float = 15.0           # Máximo % de suprimento acumulado em carteiras identificadas como insiders
 
     # Critérios de Entrada e Microestrutura
     MIN_LIQUIDITY_USD: float = 8_000.0
@@ -26,6 +56,8 @@ class Settings(BaseSettings):
     MIN_VOLUME_M5_USD: float = 1_000.0
     MIN_BUYS_M5: int = 8
     MIN_BUY_SELL_RATIO: float = 1.35
+    MIN_PRICE_CHANGE_M5_PCT: float = 0.0     # Rejeita candles negativos de 5m (evita queda em faca caindo)
+    MAX_PRICE_CHANGE_M5_PCT: float = 150.0   # Rejeita topos parabólicos hiper-estendidos
 
     # Travas de Invalidação Rápida (Anti-Ruína)
     HARD_STOP_LOSS_PCT: float = 0.35        # Drop > 35% descarta imediatamente

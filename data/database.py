@@ -64,9 +64,24 @@ class DatabaseManager:
                     closed_at TEXT,
                     hold_duration_sec REAL,
                     exit_reason TEXT,
-                    status TEXT NOT NULL
+                    status TEXT NOT NULL,
+                    gas_fees_usd REAL DEFAULT 0.0,
+                    entry_price_impact REAL DEFAULT 0.0,
+                    net_pnl_usd REAL DEFAULT 0.0
                 )
             """)
+
+            # Migração automática e segura para tabelas pré-existentes
+            for col, col_def in [
+                ("gas_fees_usd", "REAL DEFAULT 0.0"),
+                ("entry_price_impact", "REAL DEFAULT 0.0"),
+                ("net_pnl_usd", "REAL DEFAULT 0.0"),
+            ]:
+                try:
+                    await db.execute(f"ALTER TABLE trade_records ADD COLUMN {col} {col_def};")
+                except Exception:
+                    pass
+
             await db.commit()
 
     async def log_tick(
@@ -156,14 +171,19 @@ class DatabaseManager:
 
     async def insert_trade(self, trade: dict):
         """Grava a abertura de uma nova posição."""
+        gas_fees = float(trade.get("gas_fees_usd", 0.0) or 0.0)
+        impact = float(trade.get("entry_price_impact", 0.0) or 0.0)
+        net_pnl = float(trade.get("realized_pnl_usd", 0.0) - trade["invested_usd"] - gas_fees)
+
         async with self._connect() as db:
             await db.execute(
                 """
                 INSERT OR REPLACE INTO trade_records (
                     trade_id, token_symbol, token_address, chain_id, pair_address,
                     entry_price, invested_usd, realized_pnl_usd, opened_at,
-                    closed_at, hold_duration_sec, exit_reason, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    closed_at, hold_duration_sec, exit_reason, status,
+                    gas_fees_usd, entry_price_impact, net_pnl_usd
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     self._trade_id(trade),
@@ -179,26 +199,36 @@ class DatabaseManager:
                     None,
                     None,
                     "OPEN",
+                    gas_fees,
+                    impact,
+                    net_pnl,
                 ),
             )
             await db.commit()
 
     async def update_trade_partial(self, trade: dict):
         """Atualiza o PnL realizado no banco imediatamente após uma venda parcial."""
+        gas_fees = float(trade.get("gas_fees_usd", 0.0) or 0.0)
+        net_pnl = float(trade.get("realized_pnl_usd", 0.0) - trade["invested_usd"] - gas_fees)
+
         async with self._connect() as db:
             await db.execute(
                 """
                 UPDATE trade_records
-                SET realized_pnl_usd = ?
+                SET realized_pnl_usd = ?,
+                    gas_fees_usd = ?,
+                    net_pnl_usd = ?
                 WHERE trade_id = ?
                 """,
-                (trade["realized_pnl_usd"], self._trade_id(trade)),
+                (trade["realized_pnl_usd"], gas_fees, net_pnl, self._trade_id(trade)),
             )
             await db.commit()
 
     async def close_trade(self, trade: dict, exit_reason: str, duration_sec: float):
         """Atualiza a liquidação final e o PnL fechado do trade."""
         now = datetime.now(timezone.utc).isoformat()
+        gas_fees = float(trade.get("gas_fees_usd", 0.0) or 0.0)
+        net_pnl = float(trade.get("realized_pnl_usd", 0.0) - trade["invested_usd"] - gas_fees)
 
         async with self._connect() as db:
             await db.execute(
@@ -208,7 +238,9 @@ class DatabaseManager:
                     hold_duration_sec = ?,
                     realized_pnl_usd = ?,
                     exit_reason = ?,
-                    status = ?
+                    status = ?,
+                    gas_fees_usd = ?,
+                    net_pnl_usd = ?
                 WHERE trade_id = ?
                 """,
                 (
@@ -217,10 +249,13 @@ class DatabaseManager:
                     trade["realized_pnl_usd"],
                     exit_reason,
                     trade["status"],
+                    gas_fees,
+                    net_pnl,
                     self._trade_id(trade),
                 ),
             )
             await db.commit()
+
 
 
 db_manager = DatabaseManager()

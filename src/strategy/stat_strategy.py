@@ -47,8 +47,18 @@ class StatisticalStrategy:
                 "reason": f"Surto estatístico de volume (Z={z_score:.2f}) e agressão compradora ({imbalance:.2f})",
             }
 
-        # 3. Regra de Saída/Venda (Agressão vendedora ou exaustão)
+        # 3. Regra de Saída/Venda (Agressão vendedora ou exaustão confirmada por retorno não-positivo)
         elif imbalance <= self.imbalance_sell_threshold:
+            recent_return = float(latest.get("returns", 0.0) or 0.0)
+            if recent_return > 0.0:
+                return {
+                    "action": "HOLD",
+                    "price": current_price,
+                    "z_score": round(z_score, 2),
+                    "imbalance": round(imbalance, 2),
+                    "volatility": round(volatility, 4),
+                    "reason": f"OFI negativo ({imbalance:.2f}) mas absorvido com retorno positivo (+{recent_return*100:.1f}%)",
+                }
             return {
                 "action": "SELL",
                 "price": current_price,

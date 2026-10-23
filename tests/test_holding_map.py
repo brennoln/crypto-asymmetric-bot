@@ -19,13 +19,14 @@ def test_first_target_is_the_two_x_de_risking_step():
     first_target = HoldingMap().targets[0]
 
     assert first_target.multiplier == pytest.approx(2.0)
-    assert first_target.sell_percent == pytest.approx(0.5)
+    assert first_target.sell_percent == pytest.approx(0.35)
 
 
 def test_last_target_is_the_asymmetric_moonbag():
     last_target = HoldingMap().targets[-1]
 
-    assert last_target.multiplier == pytest.approx(100.0)
+    assert last_target.multiplier == pytest.approx(50.0)
+    assert last_target.sell_percent == pytest.approx(0.15)
 
 
 def test_evaluate_exit_is_empty_for_a_non_positive_entry_price():
@@ -42,10 +43,10 @@ def test_evaluate_exit_is_empty_below_the_first_target():
 def test_evaluate_exit_reports_every_reached_target():
     actions = HoldingMap().evaluate_exit(entry_price=1.0, current_price=12.0)
 
-    assert len(actions) == 2  # 2x e 10x
+    assert len(actions) == 2  # 2.0x e 5.0x
 
 
 def test_evaluate_exit_reports_all_targets_on_a_full_parabolic_run():
     actions = HoldingMap().evaluate_exit(entry_price=1.0, current_price=150.0)
 
-    assert len(actions) == len(HoldingMap().targets)
+    assert len(actions) == len(HoldingMap().targets)  # 4 alvos completos

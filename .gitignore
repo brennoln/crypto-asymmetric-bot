@@ -20,6 +20,7 @@ __pycache__/
 *.db-wal
 *.db-shm
 data/*.json
+data/*.html
 *.log
 
 # IDEs e Sistema Operacional

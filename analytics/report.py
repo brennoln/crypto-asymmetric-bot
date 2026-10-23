@@ -2,12 +2,23 @@ import asyncio
 import os
 import sys
 
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 import aiosqlite
 import pandas as pd
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 DB_PATH = os.path.join(PROJECT_ROOT, "data", "trading_history.db")
 
@@ -21,7 +32,8 @@ async def main():
         async with db.execute(
             """
             SELECT token_symbol, status, entry_price, invested_usd,
-                   realized_pnl_usd, (realized_pnl_usd - invested_usd) AS net_pnl_usd,
+                   realized_pnl_usd, COALESCE(gas_fees_usd, 0.0) AS gas_usd,
+                   CASE WHEN status = 'OPEN' THEN NULL ELSE (realized_pnl_usd - invested_usd - COALESCE(gas_fees_usd, 0.0)) END AS net_pnl_usd,
                    ROUND(hold_duration_sec / 60.0, 1) AS hold_min, exit_reason
             FROM trade_records
             ORDER BY opened_at DESC
@@ -35,7 +47,7 @@ async def main():
             total_ticks, unique_tokens = await c.fetchone()
 
     print("=" * 78)
-    print(f"RELATÓRIO QUANTITATIVO - Ticks gravados: {total_ticks:,} | Moedas: {unique_tokens}")
+    print(f"RELATÓRIO QUANTITATIVO (v0.3) - Ticks: {total_ticks:,} | Moedas: {unique_tokens}")
     print("=" * 78)
 
     if trades_df.empty:
@@ -44,9 +56,12 @@ async def main():
 
     closed = trades_df[trades_df["status"] != "OPEN"]
     open_trades = trades_df[trades_df["status"] == "OPEN"]
+    total_gas = trades_df["gas_usd"].sum()
 
     print(f"Posições Abertas agora : {len(open_trades)}")
     print(f"Posições Encerradas    : {len(closed)}")
+    print(f"Taxas de Rede Pagas    : ${total_gas:.2f}")
+
 
     if not closed.empty:
         total_net_pnl = closed["net_pnl_usd"].sum()

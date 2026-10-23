@@ -1,4 +1,5 @@
 import asyncio
+import random
 from datetime import datetime, timezone
 
 import aiohttp
@@ -14,38 +15,68 @@ class DexScanner:
     def __init__(self, session: aiohttp.ClientSession):
         self.session = session
 
-    async def _get(self, url: str) -> dict | list | None:
-        try:
-            async with self.session.get(url, timeout=10) as resp:
-                if resp.status == 200:
-                    return await resp.json()
-        except Exception as e:
-            log.warning(f"Erro na requisição ({url}): {e}")
+    async def _get(self, url: str, max_retries: int = 3) -> dict | list | None:
+        """Executa requisição HTTP com Exponential Backoff e Jitter para resiliência de rede."""
+        for attempt in range(max_retries):
+            try:
+                async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=8.0)) as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+                    elif resp.status == 429:
+                        backoff = min(1.0 * (2 ** attempt) + random.uniform(0.1, 0.4), 6.0)
+                        log.warning(f"DexScreener 429 Rate Limit ({url}). Backoff de {backoff:.2f}s...")
+                        await asyncio.sleep(backoff)
+                        continue
+                    else:
+                        log.debug(f"DexScreener HTTP {resp.status} ({url})")
+                        return None
+            except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+                if attempt < max_retries - 1:
+                    backoff = min(0.4 * (2 ** attempt) + random.uniform(0.05, 0.2), 3.0)
+                    log.debug(f"Tentativa {attempt + 1}/{max_retries} falhou para ({url}): {e}. Retentando em {backoff:.2f}s...")
+                    await asyncio.sleep(backoff)
+                else:
+                    log.warning(f"Falha de conexão persistente após {max_retries} tentativas ({url}): {e}")
+            except Exception as e:
+                log.warning(f"Erro inesperado na requisição ({url}): {e}")
+                return None
         return None
 
     @staticmethod
     def compute_ignition_score(candidate: dict) -> float:
-        """Calcula o score quantitativo de ignição para ranquear as melhores moedas."""
+        """Calcula o score quantitativo de ignição com normalização temporal e momentum (v0.5)."""
         liq = max(float(candidate.get("liquidity_usd", 0.0) or 0.0), 1.0)
         vol_m5 = float(candidate.get("vol_m5_usd", 0.0) or 0.0)
         vol_h1 = max(float(candidate.get("vol_h1_usd", 0.0) or 0.0), vol_m5, 1.0)
         buys = int(candidate.get("buys_m5", 0) or 0)
         sells = int(candidate.get("sells_m5", 0) or 0)
+        age_minutes = max(float(candidate.get("age_minutes", 60.0) or 60.0), 1.0)
+        price_change_m5 = float(candidate.get("price_change_m5", 0.0) or 0.0)
 
         turnover_m5 = min(vol_m5 / liq, 3.0)
-        baseline_m5 = max(vol_h1 / 12.0, 1.0)
+
+        # Normalização Temporal Exata: baseline ajustado pela idade real da pool
+        windows_5m = max(min(age_minutes / 5.0, 12.0), 1.0)
+        baseline_m5 = max(vol_h1 / windows_5m, 1.0)
         vol_acceleration = min(vol_m5 / baseline_m5, 5.0)
 
         total_txns = buys + sells
         imbalance = (buys - sells) / total_txns if total_txns > 0 else 0.0
 
+        # Componente de Momentum Direcional (recompensa avanço ordenado e penaliza faca caindo)
+        if price_change_m5 > 0:
+            momentum_score = min(price_change_m5 / 20.0, 1.5) * 15.0  # até +22.5 pontos
+        else:
+            momentum_score = max(price_change_m5 / 10.0, -2.0) * 15.0  # penalidade de até -30 pontos
+
         score = (
-            (turnover_m5 * 40.0)
+            (turnover_m5 * 35.0)
             + (vol_acceleration * 25.0)
-            + (max(imbalance, 0.0) * 25.0)
+            + (max(imbalance, 0.0) * 20.0)
             + (min(buys, 100) * 0.10)
+            + momentum_score
         )
-        return round(score, 2)
+        return round(max(score, 0.0), 2)
 
     async def _discover_token_addresses(self) -> list[str]:
         """Coleta endereços de múltiplas fontes do DexScreener em paralelo."""
@@ -102,6 +133,10 @@ class DexScanner:
         vol_m5 = float(best_pair.get("volume", {}).get("m5", 0.0) or 0.0)
         vol_h1 = float(best_pair.get("volume", {}).get("h1", 0.0) or 0.0)
 
+        price_change = best_pair.get("priceChange", {}) or {}
+        price_change_m5 = float(price_change.get("m5", 0.0) or 0.0)
+        price_change_h1 = float(price_change.get("h1", 0.0) or 0.0)
+
         raw_symbol = (best_pair.get("baseToken", {}).get("symbol") or "UNKNOWN").strip()
 
         candidate = {
@@ -117,6 +152,8 @@ class DexScanner:
             "buys_m5": buys,
             "sells_m5": sells,
             "age_minutes": age_minutes,
+            "price_change_m5": price_change_m5,
+            "price_change_h1": price_change_h1,
         }
         candidate["ignition_score"] = DexScanner.compute_ignition_score(candidate)
         return candidate
