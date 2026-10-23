@@ -105,6 +105,12 @@ class TelemetryDashboard:
         equity_usd = getattr(execution_client, "equity_usd", cash_usd)
         equity_brl = equity_usd * settings.USD_BRL_RATE
 
+        virtual_equity_usd = getattr(execution_client, "virtual_equity_usd", equity_usd)
+        virtual_equity_brl = virtual_equity_usd * settings.USD_BRL_RATE
+
+        realized_pnl_usd = getattr(execution_client, "total_realized_pnl_usd", 0.0)
+        realized_pnl_brl = realized_pnl_usd * settings.USD_BRL_RATE
+
         total_pnl_usd = getattr(execution_client, "total_pnl_usd", equity_usd - initial_cap_usd)
         total_pnl_brl = total_pnl_usd * settings.USD_BRL_RATE
         total_pnl_pct = (total_pnl_usd / initial_cap_usd * 100.0) if initial_cap_usd > 0 else 0.0
@@ -117,10 +123,10 @@ class TelemetryDashboard:
 
         lines = [
             sep,
-            f" ⚡ ASYMMETRIC MOMENTUM ENGINE | BANCA: R$ {initial_cap_brl:.2f} (${initial_cap_usd:.2f}) | UPTIME: {uptime_str} | SLOTS: {total_open}/{max_slots}",
+            f" ⚡ ASYMMETRIC MOMENTUM ENGINE | BANCA INICIAL: R$ {initial_cap_brl:.2f} (${initial_cap_usd:.2f}) | UPTIME: {uptime_str} | SLOTS: {total_open}/{max_slots}",
             sep,
-            f" 💼 CONTA: Patrimônio: R$ {equity_brl:.2f} (${equity_usd:.2f}) | Caixa Livre: R$ {cash_brl:.2f} (${cash_usd:.2f}) | Alocado: R$ {allocated_brl:.2f}",
-            f" 📊 RESULTADO: PnL Líquido: R$ {total_pnl_brl:+.2f} ({total_pnl_pct:+.2f}%) | Gás Pago: R$ {gas_brl:.2f} (${gas_paid:.2f})",
+            f" 💵 CAIXA REAL: R$ {cash_brl:.2f} (${cash_usd:.2f}) | 🔮 VIRTUAL (LIQ.): R$ {virtual_equity_brl:.2f} (${virtual_equity_usd:.2f})",
+            f" 💼 PATRIMÔNIO: R$ {equity_brl:.2f} | ALOCADO: R$ {allocated_brl:.2f} | PNL REALIZADO: R$ {realized_pnl_brl:+.2f} | GÁS: R$ {gas_brl:.2f}",
             sub_sep,
         ]
 
@@ -195,6 +201,20 @@ class TelemetryDashboard:
         equity_usd = getattr(execution_client, "equity_usd", cash_usd)
         equity_brl = equity_usd * settings.USD_BRL_RATE
 
+        virtual_equity_usd = getattr(execution_client, "virtual_equity_usd", None)
+        if virtual_equity_usd is None:
+            virtual_equity_usd = cash_usd
+            for p in open_positions:
+                rem = float(p.get("remaining_amount", 0.0) or 0.0)
+                curr_p = float(p.get("current_price", p.get("entry_price", 0.0)) or 0.0)
+                gross = rem * curr_p
+                net_val = max(0.0, (gross * 0.999) - 0.15)
+                virtual_equity_usd += net_val
+        virtual_equity_brl = virtual_equity_usd * settings.USD_BRL_RATE
+
+        realized_pnl_usd = getattr(execution_client, "total_realized_pnl_usd", 0.0)
+        realized_pnl_brl = realized_pnl_usd * settings.USD_BRL_RATE
+
         total_pnl_usd = getattr(execution_client, "total_pnl_usd", equity_usd - initial_cap_usd)
         total_pnl_brl = total_pnl_usd * settings.USD_BRL_RATE
         total_pnl_pct = (total_pnl_usd / initial_cap_usd * 100.0) if initial_cap_usd > 0 else 0.0
@@ -203,6 +223,7 @@ class TelemetryDashboard:
         gas_brl = gas_paid * settings.USD_BRL_RATE
 
         pnl_color = "#10b981" if total_pnl_usd >= 0 else "#ef4444"
+        realized_color = "#10b981" if realized_pnl_usd >= 0 else "#ef4444"
 
         # Gera linhas da tabela de posições com gaveta expansível
         now = time.time()
@@ -339,6 +360,67 @@ class TelemetryDashboard:
             pos_table_content = '<tr><td colspan="10" class="text-muted text-center" style="padding: 24px;">Nenhuma posição aberta no momento. Scanner em busca de assimetria...</td></tr>'
         else:
             pos_table_content = "\n".join(pos_rows)
+
+        # Gera linhas do histórico de posições encerradas (vendas, stops, alvos realizados)
+        closed_positions = [p for p in positions if p.get("status", "OPEN") != "OPEN"]
+        if not closed_positions:
+            closed_table_content = '<tr><td colspan="8" class="text-muted text-center" style="padding: 24px;">Nenhuma moeda encerrada ainda nesta sessão. Conforme ocorrerem vendas, trailing stops e take-profits, o histórico completo aparecerá aqui.</td></tr>'
+        else:
+            closed_rows = []
+            for p in reversed(closed_positions):
+                sym = html.escape(str(p.get("token_symbol") or p.get("symbol") or "N/A"))
+                reason = html.escape(str(p.get("exit_reason") or "Saída a Mercado"))
+                dur_sec = float(p.get("duration_sec") or p.get("hold_duration_sec", 0.0) or 0.0)
+                dur_str = f"{dur_sec / 60.0:.1f}m" if dur_sec > 0 else "< 1m"
+                entry_p = float(p.get("entry_price", 0.0) or 0.0)
+                exit_p = float(p.get("exit_price", entry_p) or entry_p)
+                inv_usd = float(p.get("invested_usd", 0.0) or 0.0)
+                inv_brl = inv_usd * settings.USD_BRL_RATE
+                rec_usd = float(p.get("recovered_usd", 0.0) or p.get("realized_pnl_usd", 0.0) or 0.0)
+                rec_brl = rec_usd * settings.USD_BRL_RATE
+                net_pnl = float(p.get("net_pnl_usd", rec_usd - inv_usd - 0.30))
+                net_pnl_brl = net_pnl * settings.USD_BRL_RATE
+                pnl_class = "text-green" if net_pnl >= 0 else "text-red"
+
+                peak_mult = p.get("peak_multiplier")
+                if peak_mult is None:
+                    peak_mult = (exit_p / entry_p) if entry_p > 0 else 1.0
+                exit_mult = p.get("exit_multiplier")
+                if exit_mult is None:
+                    exit_mult = (exit_p / entry_p) if entry_p > 0 else 1.0
+
+                status = str(p.get("status", "CLOSED")).upper()
+                if net_pnl > 0:
+                    badge_style = "badge-rf"
+                    status_label = "LUCRO"
+                elif status == "DROPPED":
+                    badge_style = "badge-blocked"
+                    status_label = "STOP"
+                elif status == "STAGNANT":
+                    badge_style = "badge-open"
+                    status_label = "ROTAÇÃO"
+                else:
+                    badge_style = "badge-blocked"
+                    status_label = status
+
+                chain_id = html.escape(str(p.get("chain_id", "solana")).lower())
+                pair_addr = html.escape(str(p.get("pair_address", "")))
+                token_addr = html.escape(str(p.get("token_address", "")))
+                dex_url = f"https://dexscreener.com/{chain_id}/{pair_addr}" if pair_addr else f"https://dexscreener.com/search?q={token_addr or sym}"
+
+                closed_rows.append(
+                    f"""<tr>
+                        <td><a href="{dex_url}" target="_blank" style="color: #60a5fa; text-decoration: none; font-weight: 700;">{sym} ↗</a></td>
+                        <td style="max-width: 280px; font-size: 12px; color: var(--text-dim);">{reason}</td>
+                        <td>{dur_str}</td>
+                        <td>${entry_p:.6f} &rarr; ${exit_p:.6f}</td>
+                        <td>Topo: <strong>{peak_mult:.2f}x</strong> | Saída: {exit_mult:.2f}x</td>
+                        <td>R$ {inv_brl:.2f} &rarr; R$ {rec_brl:.2f} <span class="subtext">(${rec_usd:.2f})</span></td>
+                        <td class="{pnl_class}"><strong>R$ {net_pnl_brl:+.2f}</strong> <span class="subtext">(${net_pnl:+.2f})</span></td>
+                        <td><span class="badge {badge_style}">{status_label}</span></td>
+                    </tr>"""
+                )
+            closed_table_content = "\n".join(closed_rows)
 
         html_content = f"""<!DOCTYPE html>
 <html lang="pt-BR">
@@ -530,29 +612,34 @@ class TelemetryDashboard:
 
     <div class="grid">
         <div class="card">
-            <div class="card-label">Patrimônio Total (Equity)</div>
+            <div class="card-label">💵 Dinheiro Real (Caixa Livre)</div>
+            <div class="card-value" style="color: #60a5fa;">R$ {cash_brl:.2f} <span class="subtext">(${cash_usd:.2f})</span></div>
+            <div class="subtext" style="margin-top: 4px; color: var(--text-dim);">Saldo disponível no bolso para novas compras</div>
+        </div>
+        <div class="card">
+            <div class="card-label">🔮 Dinheiro Virtual (Liq. Estimada)</div>
+            <div class="card-value" style="color: #a78bfa;">R$ {virtual_equity_brl:.2f} <span class="subtext">(${virtual_equity_usd:.2f})</span></div>
+            <div class="subtext" style="margin-top: 4px; color: var(--text-dim);">Caixa + Moedas a mercado (menos taxas de saída)</div>
+        </div>
+        <div class="card">
+            <div class="card-label">💼 Patrimônio Total (Mark-to-Market)</div>
             <div class="card-value" style="color: {pnl_color};">R$ {equity_brl:.2f} <span class="subtext">(${equity_usd:.2f})</span></div>
-            <div class="subtext" style="margin-top: 4px; color: {pnl_color}; font-weight: 600;">{total_pnl_pct:+.2f}% desde a banca inicial</div>
+            <div class="subtext" style="margin-top: 4px; color: {pnl_color}; font-weight: 600;">{total_pnl_pct:+.2f}% desde a banca (R$ {initial_cap_brl:.2f})</div>
         </div>
         <div class="card">
-            <div class="card-label">Saldo em Caixa (Livre)</div>
-            <div class="card-value">R$ {cash_brl:.2f} <span class="subtext">(${cash_usd:.2f})</span></div>
-            <div class="subtext" style="margin-top: 4px;">{total_open}/{max_slots} slots ocupados</div>
-        </div>
-        <div class="card">
-            <div class="card-label">Capital Alocado em Moedas</div>
+            <div class="card-label">🪙 Capital Alocado em Moedas</div>
             <div class="card-value">R$ {allocated_brl:.2f} <span class="subtext">(${allocated_usd:.2f})</span></div>
-            <div class="subtext" style="margin-top: 4px;">{len(open_positions)} posições ativas</div>
+            <div class="subtext" style="margin-top: 4px;">{total_open}/{max_slots} slots em aberto</div>
         </div>
         <div class="card">
-            <div class="card-label">Lucro / Prejuízo Líquido (PnL)</div>
-            <div class="card-value" style="color: {pnl_color};">R$ {total_pnl_brl:+.2f} <span class="subtext">(${total_pnl_usd:+.2f})</span></div>
-            <div class="subtext" style="margin-top: 4px;">Banca inicial: R$ {initial_cap_brl:.2f}</div>
+            <div class="card-label">📈 Lucro Realizado (No Bolso)</div>
+            <div class="card-value" style="color: {realized_color};">R$ {realized_pnl_brl:+.2f} <span class="subtext">(${realized_pnl_usd:+.2f})</span></div>
+            <div class="subtext" style="margin-top: 4px;">Consolidado de saídas e take-profits</div>
         </div>
         <div class="card">
-            <div class="card-label">Taxas de Rede Pagas (Gás)</div>
+            <div class="card-label">⛽ Taxas de Rede Pagas (Gás)</div>
             <div class="card-value">R$ {gas_brl:.2f} <span class="subtext">(${gas_paid:.2f})</span></div>
-            <div class="subtext" style="margin-top: 4px;">Simulação de Priority Fees</div>
+            <div class="subtext" style="margin-top: 4px;">Simulação de Priority & Base Fees</div>
         </div>
     </div>
 
@@ -577,6 +664,28 @@ class TelemetryDashboard:
         </thead>
         <tbody>
             {pos_table_content}
+        </tbody>
+    </table>
+
+    <div class="section-title" style="margin-top: 32px;">
+        <span>📜 Histórico de Tokens Vendidos & Saídas Finalizadas</span>
+        <span class="section-hint">Trades liquidados por Take-Profit, Trailing Stop ou Time-Stop</span>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>Token</th>
+                <th>Motivo da Saída</th>
+                <th>Duração</th>
+                <th>Entrada &rarr; Saída</th>
+                <th>Múltiplo (Topo / Saída)</th>
+                <th>Alocado &rarr; Recuperado</th>
+                <th>PnL Realizado Líquido</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {closed_table_content}
         </tbody>
     </table>
 
@@ -711,8 +820,44 @@ if __name__ == "__main__":
                     realized_pnl = (row[0] or 0.0) if row else 0.0
                     gas_paid = (row[1] or 0.0) if row else 0.0
 
+                async with db.execute(
+                    """
+                    SELECT token_symbol, opened_at, closed_at, hold_duration_sec,
+                           entry_price, invested_usd, realized_pnl_usd, net_pnl_usd,
+                           gas_fees_usd, exit_reason, status, chain_id, pair_address
+                    FROM trade_records
+                    WHERE status != 'OPEN'
+                    ORDER BY rowid DESC
+                    LIMIT 25
+                    """
+                ) as cursor:
+                    crows = await cursor.fetchall()
+                    for cr in crows:
+                        csym, copened, cclosed, cdur, centry, cinv, creal, cnet, cgas, creason, cstatus, cchain, cpair = cr
+                        positions.append({
+                            "token_symbol": csym,
+                            "symbol": csym,
+                            "opened_at": copened,
+                            "closed_at": cclosed,
+                            "duration_sec": cdur or 0.0,
+                            "entry_price": centry or 0.0,
+                            "exit_price": centry or 0.0,
+                            "invested_usd": cinv or 0.0,
+                            "recovered_usd": creal or 0.0,
+                            "net_pnl_usd": cnet or 0.0,
+                            "gas_fees_usd": cgas or 0.30,
+                            "exit_reason": creason or "Finalizado",
+                            "status": cstatus or "CLOSED",
+                            "chain_id": cchain or "solana",
+                            "pair_address": cpair or "",
+                            "peak_multiplier": 1.0,
+                            "exit_multiplier": 1.0,
+                            "remaining_amount": 0.0,
+                        })
+
         initial_cap_usd = float(settings.INITIAL_CAPITAL_USD)
-        allocated_usd = sum(p["invested_usd"] for p in positions)
+        open_pos = [p for p in positions if p.get("status", "OPEN") == "OPEN"]
+        allocated_usd = sum(p["invested_usd"] for p in open_pos)
         cash_usd = max(0.0, initial_cap_usd - allocated_usd)
 
         class StandaloneClient:
@@ -729,7 +874,8 @@ if __name__ == "__main__":
 
             @property
             def equity_usd(self) -> float:
-                open_val = sum(p["invested_usd"] * p["current_multiplier"] for p in self.positions)
+                open_trades = [p for p in self.positions if p.get("status", "OPEN") == "OPEN"]
+                open_val = sum(p["invested_usd"] * p.get("current_multiplier", 1.0) for p in open_trades)
                 return self.cash_usd + open_val
 
             @property
@@ -737,8 +883,22 @@ if __name__ == "__main__":
                 return self.equity_usd * settings.USD_BRL_RATE
 
             @property
+            def virtual_equity_usd(self) -> float:
+                open_trades = [p for p in self.positions if p.get("status", "OPEN") == "OPEN"]
+                return max(0.0, self.equity_usd - (len(open_trades) * 0.15))
+
+            @property
+            def virtual_equity_brl(self) -> float:
+                return self.virtual_equity_usd * settings.USD_BRL_RATE
+
+            @property
+            def total_realized_pnl_brl(self) -> float:
+                return self.total_realized_pnl_usd * settings.USD_BRL_RATE
+
+            @property
             def allocated_usd(self) -> float:
-                return sum(p["invested_usd"] for p in self.positions)
+                open_trades = [p for p in self.positions if p.get("status", "OPEN") == "OPEN"]
+                return sum(p["invested_usd"] for p in open_trades)
 
             @property
             def allocated_brl(self) -> float:

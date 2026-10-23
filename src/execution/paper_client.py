@@ -58,6 +58,31 @@ class PaperExecutionClient:
         return self.equity_usd * settings.USD_BRL_RATE
 
     @property
+    def virtual_equity_usd(self) -> float:
+        """Dinheiro Virtual instantâneo: Caixa livre + Liquidação a mercado de todas as moedas abertas deduzindo taxas de gás de saída e impacto."""
+        open_trades = [p for p in self.positions if p.get("status") == "OPEN"]
+        net_open_val = 0.0
+        for p in open_trades:
+            rem = float(p.get("remaining_amount", 0.0) or 0.0)
+            curr_p = float(p.get("current_price", p.get("entry_price", 0.0)) or 0.0)
+            curr_liq = float(p.get("current_liq", p.get("initial_liquidity_usd", 0.0)) or 0.0)
+            gross = rem * curr_p
+            sell_impact = self.compute_price_impact(gross, curr_liq)
+            fee_factor = 1.0 - self.lp_swap_fee_pct if (self.enable_price_impact and self.lp_swap_fee_pct > 0) else 1.0
+            recovered = gross * (1.0 - sell_impact) * fee_factor
+            net_val = max(0.0, recovered - self.gas_fee_usd)
+            net_open_val += net_val
+        return self.cash_usd + net_open_val
+
+    @property
+    def virtual_equity_brl(self) -> float:
+        return self.virtual_equity_usd * settings.USD_BRL_RATE
+
+    @property
+    def total_realized_pnl_brl(self) -> float:
+        return self.total_realized_pnl_usd * settings.USD_BRL_RATE
+
+    @property
     def allocated_usd(self) -> float:
         """Capital atualmente investido nas posições abertas."""
         open_trades = [p for p in self.positions if p.get("status") == "OPEN"]
@@ -214,6 +239,7 @@ class PaperExecutionClient:
 
         trade["remaining_amount"] -= tokens_to_sell
         trade["realized_pnl_usd"] += revenue_usd
+        trade["recovered_usd"] = trade.get("recovered_usd", 0.0) + revenue_usd
         trade["gas_fees_usd"] = trade.get("gas_fees_usd", 0.0) + self.gas_fee_usd
         trade["executed_targets"].add(multiplier)
 
@@ -235,13 +261,19 @@ class PaperExecutionClient:
         if trade["remaining_amount"] <= 1e-6:
             trade["remaining_amount"] = 0.0
             trade["status"] = "CLOSED"
-            duration_sec = time.time() - trade["opened_timestamp"]
+            trade["exit_price"] = effective_sell_price
+            trade["exit_reason"] = "Todos os alvos do Holding Map realizados"
+            trade["exit_multiplier"] = current_price / trade["entry_price"] if trade["entry_price"] > 0 else 1.0
+            trade["closed_timestamp"] = time.time()
+            trade["duration_sec"] = time.time() - trade["opened_timestamp"]
+            duration_sec = trade["duration_sec"]
             await db_manager.close_trade(
                 trade,
                 exit_reason="Todos os alvos do Holding Map realizados",
                 duration_sec=duration_sec,
             )
             net_pnl = self._settle(trade)
+            trade["net_pnl_usd"] = net_pnl
             log.info(
                 f"🏁 [POSIÇÃO ENCERRADA] {trade['token_symbol']} realizou todos os alvos. "
                 f"PnL Líquido Real: {net_pnl:+.2f} (Taxas totais: ${trade['gas_fees_usd']:.2f})"
@@ -267,21 +299,28 @@ class PaperExecutionClient:
         recovered_usd = remaining * effective_sell_price
 
         trade["realized_pnl_usd"] += recovered_usd
+        trade["recovered_usd"] = trade.get("recovered_usd", 0.0) + recovered_usd
         trade["gas_fees_usd"] = trade.get("gas_fees_usd", 0.0) + self.gas_fee_usd
         trade["remaining_amount"] = 0.0
         trade["status"] = "STAGNANT"
+        trade["exit_price"] = effective_sell_price
+        trade["exit_reason"] = reason
+        trade["exit_multiplier"] = current_price / trade["entry_price"] if trade["entry_price"] > 0 else 1.0
+        trade["closed_timestamp"] = time.time()
+        trade["duration_sec"] = time.time() - trade["opened_timestamp"]
 
         exit_gas = self.gas_fee_usd
         self.total_gas_paid_usd += exit_gas
         self.cash_usd += max(0.0, recovered_usd - exit_gas)
         self.total_realized_pnl_usd += (recovered_usd - (remaining * trade["entry_price"]))
 
-        duration_sec = time.time() - trade["opened_timestamp"]
+        duration_sec = trade["duration_sec"]
         await db_manager.close_trade(
             trade, exit_reason=reason, duration_sec=duration_sec
         )
 
         net_pnl = self._settle(trade)
+        trade["net_pnl_usd"] = net_pnl
         ratio = current_price / trade["entry_price"] if trade["entry_price"] > 0 else 0
         var_pct = (ratio - 1.0) * 100
 
@@ -311,19 +350,26 @@ class PaperExecutionClient:
         recovered_usd = remaining * effective_sell_price
 
         trade["realized_pnl_usd"] += recovered_usd
+        trade["recovered_usd"] = trade.get("recovered_usd", 0.0) + recovered_usd
         trade["gas_fees_usd"] = trade.get("gas_fees_usd", 0.0) + self.gas_fee_usd
         trade["remaining_amount"] = 0.0
         trade["status"] = "DROPPED"
+        trade["exit_price"] = effective_sell_price
+        trade["exit_reason"] = reason
+        trade["exit_multiplier"] = current_price / trade["entry_price"] if trade["entry_price"] > 0 else 1.0
+        trade["closed_timestamp"] = time.time()
+        trade["duration_sec"] = time.time() - trade["opened_timestamp"]
 
         exit_gas = self.gas_fee_usd
         self.total_gas_paid_usd += exit_gas
         self.cash_usd += max(0.0, recovered_usd - exit_gas)
         self.total_realized_pnl_usd += (recovered_usd - (remaining * trade["entry_price"]))
 
-        duration_sec = time.time() - trade["opened_timestamp"]
+        duration_sec = trade["duration_sec"]
         await db_manager.close_trade(trade, exit_reason=reason, duration_sec=duration_sec)
 
         net_pnl = self._settle(trade)
+        trade["net_pnl_usd"] = net_pnl
         log.warning(
             f"🚫 [STOP A MERCADO] {trade['token_symbol']} liquidado. "
             f"Motivo: {reason} | Recuperado: ${recovered_usd:.2f} (Impacto: -{sell_impact * 100:.2f}%) | "
@@ -335,8 +381,15 @@ class PaperExecutionClient:
         """Encerra a posição em caso de rugpull absoluto (onde a liquidez zerou por completo)."""
         trade["status"] = "DEAD"
         trade["remaining_amount"] = 0.0
+        trade["exit_price"] = 0.0
+        trade["exit_reason"] = reason
+        trade["recovered_usd"] = trade.get("recovered_usd", 0.0)
+        trade["exit_multiplier"] = 0.0
+        trade["closed_timestamp"] = time.time()
+        trade["duration_sec"] = time.time() - trade["opened_timestamp"]
+        trade["net_pnl_usd"] = -trade["invested_usd"] - trade.get("gas_fees_usd", 0.0)
 
-        duration_sec = time.time() - trade["opened_timestamp"]
+        duration_sec = trade["duration_sec"]
         await db_manager.close_trade(trade, exit_reason=reason, duration_sec=duration_sec)
 
         net_pnl = self._settle(trade)
