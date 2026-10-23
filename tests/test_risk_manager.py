@@ -70,3 +70,26 @@ def test_counters_reset_when_the_utc_day_rolls_over(monkeypatch):
     assert risk.can_open_position() is True
     assert risk.daily_realized_pnl_usd == 0.0
     assert risk.daily_drawdown_usd == 0.0
+
+
+
+def test_pool_based_optimal_allocation():
+    risk = RiskManager()
+    cash = 20.0  # $20 disponível em caixa
+
+    alloc_high = risk.calculate_trade_allocation(
+        cash_usd=cash,
+        pool_liquidity_usd=100_000.0,
+        vol_m5_usd=20_000.0,
+        ignition_score=95.0,
+    )
+    alloc_low = risk.calculate_trade_allocation(
+        cash_usd=cash,
+        pool_liquidity_usd=5_000.0,
+        vol_m5_usd=200.0,
+        ignition_score=65.0,
+    )
+
+    assert alloc_high > alloc_low
+    assert alloc_high <= round(settings.INITIAL_CAPITAL_USD * settings.MAX_CAPITAL_PER_TRADE_PCT, 2)
+    assert alloc_low >= settings.MIN_POSITION_SIZE_USD

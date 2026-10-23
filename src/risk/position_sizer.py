@@ -40,8 +40,11 @@ class RiskManager:
         self,
         cash_usd: float,
         active_positions_count: int = 0,
+        pool_liquidity_usd: float = 0.0,
+        vol_m5_usd: float = 0.0,
+        ignition_score: float = 0.0,
     ) -> float:
-        """Calcula o montante em USD a ser alocado para uma nova compra considerando custos de compra e saldo em caixa."""
+        """Calcula o montante ótimo em USD a ser alocado para compra maximizando retorno com base na liquidez da pool e momentum."""
         min_required = settings.MIN_POSITION_SIZE_USD + settings.GAS_FEE_USD
         if cash_usd < min_required:
             return 0.0
@@ -51,15 +54,49 @@ class RiskManager:
                 return settings.POSITION_SIZE_USD
             return 0.0
 
-        # Modo DYNAMIC: Aloca uma fração da banca inicial (ex: 25%), limitada pelo caixa disponível menos gás
         available_cash = cash_usd - settings.GAS_FEE_USD
-        target_allocation = settings.INITIAL_CAPITAL_USD * settings.MAX_CAPITAL_PER_TRADE_PCT
-        allocated = min(available_cash, target_allocation)
 
-        if allocated < settings.MIN_POSITION_SIZE_USD:
-            return 0.0
+        # Se não foram fornecidos dados de pool, usa o padrão proporcional de 25% da banca
+        if pool_liquidity_usd <= 0:
+            target = settings.INITIAL_CAPITAL_USD * 0.25
+            return round(min(available_cash, max(settings.MIN_POSITION_SIZE_USD, target)), 2)
 
-        return round(allocated, 2)
+        # 1. Teto de impacto de preço na AMM (x * y = k): protege contra slippage excessivo
+        quote_reserve = pool_liquidity_usd / 2.0
+        max_allowed_by_impact = quote_reserve * settings.MAX_AMM_PRICE_IMPACT_PCT
+
+        # 2. Fator de Convencimento do Ignition Score (Score normalizado entre 60 e 100)
+        norm_score = max(0.0, min(1.0, (ignition_score - 60.0) / 40.0))
+        score_multiplier = 0.70 + (norm_score * 0.65)  # 0.70x a 1.35x
+
+        # 3. Fator de Profundidade e Velocidade de Volume da Pool (Turnover 5m / Liquidez)
+        turnover_ratio = (vol_m5_usd / max(100.0, pool_liquidity_usd)) if pool_liquidity_usd > 0 else 0.0
+        depth_multiplier = min(1.25, max(0.85, 0.85 + (turnover_ratio * 4.0)))
+
+        # 4. Dimensionamento Ótimo em USD
+        base_target = settings.INITIAL_CAPITAL_USD * 0.25  # ~R$ 25 / $4.35
+        optimal_target = base_target * score_multiplier * depth_multiplier
+
+        # Limites de risco da banca: entre 15% e 35% da banca inicial
+        min_trade = round(max(settings.MIN_POSITION_SIZE_USD, settings.INITIAL_CAPITAL_USD * settings.MIN_CAPITAL_PER_TRADE_PCT), 2)
+        max_trade = round(settings.INITIAL_CAPITAL_USD * settings.MAX_CAPITAL_PER_TRADE_PCT, 2)
+
+        bounded_allocation = min(max_trade, max(min_trade, optimal_target))
+
+        # Restringe pelo limite de impacto de slippage na AMM (se a pool for rasa)
+        if max_allowed_by_impact > 0:
+            bounded_allocation = min(bounded_allocation, max_allowed_by_impact)
+
+        # Limita estritamente pelo caixa livre disponível
+        final_allocation = min(available_cash, bounded_allocation)
+
+        if final_allocation < settings.MIN_POSITION_SIZE_USD:
+            if available_cash >= settings.MIN_POSITION_SIZE_USD and max_allowed_by_impact >= settings.MIN_POSITION_SIZE_USD:
+                final_allocation = settings.MIN_POSITION_SIZE_USD
+            else:
+                return 0.0
+
+        return round(final_allocation, 2)
 
     def calculate_position_size(self, price_usd: float, allocated_usd: float | None = None) -> float:
         """Calcula a quantidade de tokens para alocar o valor determinado por trade."""

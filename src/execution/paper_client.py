@@ -29,6 +29,7 @@ class PaperExecutionClient:
         )
         self.lp_swap_fee_pct = lp_swap_fee_pct
         self.positions: list[dict] = []
+        self.sales_history: list[dict] = []
 
         # Gestão de Caixa e Banca de Trading (v0.8.5)
         self.initial_capital_usd = float(
@@ -270,6 +271,30 @@ class PaperExecutionClient:
         self.total_gas_paid_usd += exit_gas
         self.cash_usd += max(0.0, revenue_usd - exit_gas)
 
+        # Registra venda parcial no histórico de vendas
+        sold_cost_usd = tokens_to_sell * trade["entry_price"]
+        sale_net_pnl = revenue_usd - sold_cost_usd - exit_gas
+        tag = custom_label or f"Take-Profit {multiplier:.1f}x ({sell_pct * 100:.0f}%)"
+        self.sales_history.append({
+            "token_symbol": trade["token_symbol"],
+            "type": "PARCIAL",
+            "reason": tag,
+            "tokens_sold": tokens_to_sell,
+            "entry_price": trade["entry_price"],
+            "sell_price": effective_sell_price,
+            "multiplier": current_price / trade["entry_price"] if trade["entry_price"] > 0 else 1.0,
+            "peak_multiplier": trade.get("peak_multiplier", multiplier),
+            "invested_portion_usd": sold_cost_usd,
+            "recovered_usd": revenue_usd,
+            "gas_fee_usd": exit_gas,
+            "net_pnl_usd": sale_net_pnl,
+            "timestamp": time.time(),
+            "duration_sec": time.time() - trade["opened_timestamp"],
+            "chain_id": trade.get("chain_id", "solana"),
+            "pair_address": trade.get("pair_address", ""),
+            "token_address": trade.get("token_address", ""),
+        })
+
         net_so_far = self._net_pnl(trade)
         tag = custom_label or f"TAKE PROFIT {multiplier:.1f}x"
         log.info(
@@ -342,6 +367,31 @@ class PaperExecutionClient:
 
         net_pnl = self._settle(trade)
         trade["net_pnl_usd"] = net_pnl
+
+        # Registra no histórico de vendas
+        sold_cost_usd = remaining * trade["entry_price"]
+        has_prior_sales = any(s["token_symbol"] == trade["token_symbol"] for s in self.sales_history)
+        buy_gas = 0.0 if has_prior_sales else self.gas_fee_usd
+        sale_net_pnl = recovered_usd - sold_cost_usd - buy_gas - exit_gas
+        self.sales_history.append({
+            "token_symbol": trade["token_symbol"],
+            "type": "FINAL",
+            "reason": reason,
+            "tokens_sold": remaining,
+            "entry_price": trade["entry_price"],
+            "sell_price": effective_sell_price,
+            "multiplier": current_price / trade["entry_price"] if trade["entry_price"] > 0 else 1.0,
+            "peak_multiplier": trade.get("peak_multiplier", 1.0),
+            "invested_portion_usd": sold_cost_usd,
+            "recovered_usd": recovered_usd,
+            "gas_fee_usd": exit_gas + buy_gas,
+            "net_pnl_usd": sale_net_pnl,
+            "timestamp": time.time(),
+            "duration_sec": trade["duration_sec"],
+            "chain_id": trade.get("chain_id", "solana"),
+            "pair_address": trade.get("pair_address", ""),
+            "token_address": trade.get("token_address", ""),
+        })
         ratio = current_price / trade["entry_price"] if trade["entry_price"] > 0 else 0
         var_pct = (ratio - 1.0) * 100
 
@@ -390,6 +440,31 @@ class PaperExecutionClient:
 
         net_pnl = self._settle(trade)
         trade["net_pnl_usd"] = net_pnl
+
+        # Registra no histórico de vendas
+        sold_cost_usd = remaining * trade["entry_price"]
+        has_prior_sales = any(s["token_symbol"] == trade["token_symbol"] for s in self.sales_history)
+        buy_gas = 0.0 if has_prior_sales else self.gas_fee_usd
+        sale_net_pnl = recovered_usd - sold_cost_usd - buy_gas - exit_gas
+        self.sales_history.append({
+            "token_symbol": trade["token_symbol"],
+            "type": "FINAL",
+            "reason": reason,
+            "tokens_sold": remaining,
+            "entry_price": trade["entry_price"],
+            "sell_price": effective_sell_price,
+            "multiplier": current_price / trade["entry_price"] if trade["entry_price"] > 0 else 1.0,
+            "peak_multiplier": trade.get("peak_multiplier", 1.0),
+            "invested_portion_usd": sold_cost_usd,
+            "recovered_usd": recovered_usd,
+            "gas_fee_usd": exit_gas + buy_gas,
+            "net_pnl_usd": sale_net_pnl,
+            "timestamp": time.time(),
+            "duration_sec": trade["duration_sec"],
+            "chain_id": trade.get("chain_id", "solana"),
+            "pair_address": trade.get("pair_address", ""),
+            "token_address": trade.get("token_address", ""),
+        })
         log.warning(
             f"🚫 [STOP A MERCADO] {trade['token_symbol']} liquidado. "
             f"Motivo: {reason} | Recuperado: ${recovered_usd:.2f} (Impacto: -{sell_impact * 100:.2f}%) | "
@@ -413,6 +488,26 @@ class PaperExecutionClient:
         await db_manager.close_trade(trade, exit_reason=reason, duration_sec=duration_sec)
 
         net_pnl = self._settle(trade)
+
+        self.sales_history.append({
+            "token_symbol": trade["token_symbol"],
+            "type": "FINAL",
+            "reason": reason,
+            "tokens_sold": trade.get("remaining_amount", 0.0),
+            "entry_price": trade["entry_price"],
+            "sell_price": 0.0,
+            "multiplier": 0.0,
+            "peak_multiplier": trade.get("peak_multiplier", 1.0),
+            "invested_portion_usd": trade["invested_usd"],
+            "recovered_usd": 0.0,
+            "gas_fee_usd": trade.get("gas_fees_usd", 0.0),
+            "net_pnl_usd": -trade["invested_usd"] - trade.get("gas_fees_usd", 0.0),
+            "timestamp": time.time(),
+            "duration_sec": trade.get("duration_sec", 0.0),
+            "chain_id": trade.get("chain_id", "solana"),
+            "pair_address": trade.get("pair_address", ""),
+            "token_address": trade.get("token_address", ""),
+        })
         log.warning(
             f"💀 [RUGPULL / PERDA TOTAL] {trade['token_symbol']} zerado. "
             f"Motivo: {reason} | Prejuízo Líquido: ${net_pnl:+.2f} (Gás pago na compra: ${trade.get('gas_fees_usd', 0.0):.2f})"

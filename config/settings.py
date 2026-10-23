@@ -16,8 +16,10 @@ class Settings(BaseSettings):
     INITIAL_CAPITAL_BRL: float = 100.0      # Saldo inicial simulado da conta em Reais (R$)
     USD_BRL_RATE: float = 5.75              # Cotação de conversão USD/BRL
     POSITION_SIZING_MODE: str = "DYNAMIC"   # "DYNAMIC" (proporcional à banca e slots) ou "FIXED"
-    MAX_CAPITAL_PER_TRADE_PCT: float = 0.25 # Máximo 25% da banca por posição (ex: ~R$ 25 por trade com R$ 100)
+    MIN_CAPITAL_PER_TRADE_PCT: float = 0.15 # Alocação mínima de 15% da banca em pools rasas (~R$ 15 / ~$2.60)
+    MAX_CAPITAL_PER_TRADE_PCT: float = 0.35 # Alocação máxima de 35% da banca em pools profundas e alto ignition (~R$ 35 / ~$6.00)
     MIN_POSITION_SIZE_USD: float = 3.50     # Alocação mínima viável por operação para diluir taxas de gás
+    MAX_AMM_PRICE_IMPACT_PCT: float = 0.0030 # Impacto máximo de preço tolerado na AMM (0.30% da reserva de cotação)
 
     @property
     def INITIAL_CAPITAL_USD(self) -> float:

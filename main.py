@@ -576,6 +576,9 @@ async def market_scanner(
             allocated_usd = risk_engine.calculate_trade_allocation(
                 cash_usd=execution_client.cash_usd,
                 active_positions_count=len(open_positions),
+                pool_liquidity_usd=float(candidate.get("liquidity_usd", 0.0) or 0.0),
+                vol_m5_usd=float(candidate.get("vol_m5", 0.0) or 0.0),
+                ignition_score=float(candidate.get("ignition_score", 0.0) or 0.0),
             )
             if allocated_usd <= 0:
                 log.warning(

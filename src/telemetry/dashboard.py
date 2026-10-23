@@ -379,56 +379,45 @@ class TelemetryDashboard:
         else:
             pos_table_content = "\n".join(pos_rows)
 
-        # Gera linhas do histórico de posições encerradas (vendas, stops, alvos realizados)
-        closed_positions = [p for p in positions if p.get("status", "OPEN") != "OPEN"]
-        if not closed_positions:
-            empty_closed_msg = (
-                "Histórico limpo. Pronto para a próxima sessão."
-                if is_offline
-                else "Nenhuma moeda encerrada ainda nesta sessão. Conforme ocorrerem vendas, trailing stops e take-profits, o histórico completo aparecerá aqui."
-            )
-            closed_table_content = f'<tr><td colspan="8" class="text-muted text-center" style="padding: 24px;">{empty_closed_msg}</td></tr>'
-        else:
+        # Gera linhas do histórico de vendas (vendas parciais de take-profit, cobertura de taxas e liquidações finais)
+        sales_records = getattr(execution_client, "sales_history", [])
+        if sales_records:
             closed_rows = []
-            for p in reversed(closed_positions):
-                sym = html.escape(str(p.get("token_symbol") or p.get("symbol") or "N/A"))
-                reason = html.escape(str(p.get("exit_reason") or "Saída a Mercado"))
-                dur_sec = float(p.get("duration_sec") or p.get("hold_duration_sec", 0.0) or 0.0)
+            for s in reversed(sales_records):
+                sym = html.escape(str(s.get("token_symbol") or "N/A"))
+                reason = html.escape(str(s.get("reason") or "Venda a Mercado"))
+                dur_sec = float(s.get("duration_sec", 0.0) or 0.0)
                 dur_str = f"{dur_sec / 60.0:.1f}m" if dur_sec > 0 else "< 1m"
-                entry_p = float(p.get("entry_price", 0.0) or 0.0)
-                exit_p = float(p.get("exit_price", entry_p) or entry_p)
-                inv_usd = float(p.get("invested_usd", 0.0) or 0.0)
+                entry_p = float(s.get("entry_price", 0.0) or 0.0)
+                sell_p = float(s.get("sell_price", entry_p) or entry_p)
+                inv_usd = float(s.get("invested_portion_usd", 0.0) or 0.0)
                 inv_brl = inv_usd * settings.USD_BRL_RATE
-                rec_usd = float(p.get("recovered_usd", 0.0) or p.get("realized_pnl_usd", 0.0) or 0.0)
+                rec_usd = float(s.get("recovered_usd", 0.0) or 0.0)
                 rec_brl = rec_usd * settings.USD_BRL_RATE
-                net_pnl = float(p.get("net_pnl_usd", rec_usd - inv_usd - 0.30))
+                net_pnl = float(s.get("net_pnl_usd", 0.0) or 0.0)
                 net_pnl_brl = net_pnl * settings.USD_BRL_RATE
                 pnl_class = "text-green" if net_pnl >= 0 else "text-red"
 
-                peak_mult = p.get("peak_multiplier")
-                if peak_mult is None:
-                    peak_mult = (exit_p / entry_p) if entry_p > 0 else 1.0
-                exit_mult = p.get("exit_multiplier")
-                if exit_mult is None:
-                    exit_mult = (exit_p / entry_p) if entry_p > 0 else 1.0
+                peak_mult = float(s.get("peak_multiplier", 1.0) or 1.0)
+                mult = float(s.get("multiplier", 1.0) or 1.0)
 
-                status = str(p.get("status", "CLOSED")).upper()
-                if net_pnl > 0:
+                sale_type = str(s.get("type", "FINAL")).upper()
+                if "COBERTURA" in reason.upper():
+                    badge_style = "badge-open"
+                    status_label = "COBERTURA"
+                elif sale_type == "PARCIAL" or net_pnl > 0:
                     badge_style = "badge-rf"
-                    status_label = "LUCRO"
-                elif status == "DROPPED":
-                    badge_style = "badge-blocked"
-                    status_label = "STOP"
-                elif status == "STAGNANT":
+                    status_label = "PARCIAL" if sale_type == "PARCIAL" else "LUCRO"
+                elif "INÉRCIA" in reason.upper() or "ESTAGNAÇÃO" in reason.upper():
                     badge_style = "badge-open"
                     status_label = "ROTAÇÃO"
                 else:
                     badge_style = "badge-blocked"
-                    status_label = status
+                    status_label = "STOP"
 
-                chain_id = html.escape(str(p.get("chain_id", "solana")).lower())
-                pair_addr = html.escape(str(p.get("pair_address", "")))
-                token_addr = html.escape(str(p.get("token_address", "")))
+                chain_id = html.escape(str(s.get("chain_id", "solana")).lower())
+                pair_addr = html.escape(str(s.get("pair_address", "")))
+                token_addr = html.escape(str(s.get("token_address", "")))
                 dex_url = f"https://dexscreener.com/{chain_id}/{pair_addr}" if pair_addr else f"https://dexscreener.com/search?q={token_addr or sym}"
 
                 closed_rows.append(
@@ -436,14 +425,79 @@ class TelemetryDashboard:
                         <td><a href="{dex_url}" target="_blank" style="color: #60a5fa; text-decoration: none; font-weight: 700;">{sym} ↗</a></td>
                         <td style="max-width: 280px; font-size: 12px; color: var(--text-dim);">{reason}</td>
                         <td>{dur_str}</td>
-                        <td>${entry_p:.6f} &rarr; ${exit_p:.6f}</td>
-                        <td>Topo: <strong>{peak_mult:.2f}x</strong> | Saída: {exit_mult:.2f}x</td>
+                        <td>${entry_p:.6f} &rarr; ${sell_p:.6f}</td>
+                        <td>Venda: <strong>{mult:.2f}x</strong> <span class="subtext">(Topo: {peak_mult:.2f}x)</span></td>
                         <td>R$ {inv_brl:.2f} &rarr; R$ {rec_brl:.2f} <span class="subtext">(${rec_usd:.2f})</span></td>
                         <td class="{pnl_class}"><strong>R$ {net_pnl_brl:+.2f}</strong> <span class="subtext">(${net_pnl:+.2f})</span></td>
                         <td><span class="badge {badge_style}">{status_label}</span></td>
                     </tr>"""
                 )
             closed_table_content = "\n".join(closed_rows)
+        else:
+            closed_positions = [p for p in positions if p.get("status", "OPEN") != "OPEN"]
+            if not closed_positions:
+                empty_closed_msg = (
+                    "Histórico limpo. Pronto para a próxima sessão."
+                    if is_offline
+                    else "Nenhuma venda executada ainda nesta sessão. Conforme ocorrerem vendas parciais, trailing stops e take-profits, o histórico completo aparecerá aqui."
+                )
+                closed_table_content = f'<tr><td colspan="8" class="text-muted text-center" style="padding: 24px;">{empty_closed_msg}</td></tr>'
+            else:
+                closed_rows = []
+                for p in reversed(closed_positions):
+                    sym = html.escape(str(p.get("token_symbol") or p.get("symbol") or "N/A"))
+                    reason = html.escape(str(p.get("exit_reason") or "Saída a Mercado"))
+                    dur_sec = float(p.get("duration_sec") or p.get("hold_duration_sec", 0.0) or 0.0)
+                    dur_str = f"{dur_sec / 60.0:.1f}m" if dur_sec > 0 else "< 1m"
+                    entry_p = float(p.get("entry_price", 0.0) or 0.0)
+                    exit_p = float(p.get("exit_price", entry_p) or entry_p)
+                    inv_usd = float(p.get("invested_usd", 0.0) or 0.0)
+                    inv_brl = inv_usd * settings.USD_BRL_RATE
+                    rec_usd = float(p.get("recovered_usd", 0.0) or p.get("realized_pnl_usd", 0.0) or 0.0)
+                    rec_brl = rec_usd * settings.USD_BRL_RATE
+                    net_pnl = float(p.get("net_pnl_usd", rec_usd - inv_usd - 0.30))
+                    net_pnl_brl = net_pnl * settings.USD_BRL_RATE
+                    pnl_class = "text-green" if net_pnl >= 0 else "text-red"
+
+                    peak_mult = p.get("peak_multiplier")
+                    if peak_mult is None:
+                        peak_mult = (exit_p / entry_p) if entry_p > 0 else 1.0
+                    exit_mult = p.get("exit_multiplier")
+                    if exit_mult is None:
+                        exit_mult = (exit_p / entry_p) if entry_p > 0 else 1.0
+
+                    status = str(p.get("status", "CLOSED")).upper()
+                    if net_pnl > 0:
+                        badge_style = "badge-rf"
+                        status_label = "LUCRO"
+                    elif status == "DROPPED":
+                        badge_style = "badge-blocked"
+                        status_label = "STOP"
+                    elif status == "STAGNANT":
+                        badge_style = "badge-open"
+                        status_label = "ROTAÇÃO"
+                    else:
+                        badge_style = "badge-blocked"
+                        status_label = status
+
+                    chain_id = html.escape(str(p.get("chain_id", "solana")).lower())
+                    pair_addr = html.escape(str(p.get("pair_address", "")))
+                    token_addr = html.escape(str(p.get("token_address", "")))
+                    dex_url = f"https://dexscreener.com/{chain_id}/{pair_addr}" if pair_addr else f"https://dexscreener.com/search?q={token_addr or sym}"
+
+                    closed_rows.append(
+                        f"""<tr>
+                            <td><a href="{dex_url}" target="_blank" style="color: #60a5fa; text-decoration: none; font-weight: 700;">{sym} ↗</a></td>
+                            <td style="max-width: 280px; font-size: 12px; color: var(--text-dim);">{reason}</td>
+                            <td>{dur_str}</td>
+                            <td>${entry_p:.6f} &rarr; ${exit_p:.6f}</td>
+                            <td>Topo: <strong>{peak_mult:.2f}x</strong> | Saída: {exit_mult:.2f}x</td>
+                            <td>R$ {inv_brl:.2f} &rarr; R$ {rec_brl:.2f} <span class="subtext">(${rec_usd:.2f})</span></td>
+                            <td class="{pnl_class}"><strong>R$ {net_pnl_brl:+.2f}</strong> <span class="subtext">(${net_pnl:+.2f})</span></td>
+                            <td><span class="badge {badge_style}">{status_label}</span></td>
+                        </tr>"""
+                    )
+                closed_table_content = "\n".join(closed_rows)
 
         html_content = f"""<!DOCTYPE html>
 <html lang="pt-BR">
@@ -691,17 +745,17 @@ class TelemetryDashboard:
     </table>
 
     <div class="section-title" style="margin-top: 32px;">
-        <span>📜 Histórico de Tokens Vendidos & Saídas Finalizadas</span>
-        <span class="section-hint">Trades liquidados por Take-Profit, Trailing Stop ou Time-Stop</span>
+        <span>📜 Histórico Completo de Vendas & Saídas Executadas</span>
+        <span class="section-hint">Todas as vendas parciais (Take-Profit, Cobertura de Taxas) e liquidações registradas</span>
     </div>
     <table>
         <thead>
             <tr>
                 <th>Token</th>
-                <th>Motivo da Saída</th>
+                <th>Tipo / Motivo da Venda</th>
                 <th>Duração</th>
-                <th>Entrada &rarr; Saída</th>
-                <th>Múltiplo (Topo / Saída)</th>
+                <th>Entrada &rarr; Preço Venda</th>
+                <th>Múltiplo da Venda</th>
                 <th>Alocado &rarr; Recuperado</th>
                 <th>PnL Realizado Líquido</th>
                 <th>Status</th>
@@ -791,6 +845,7 @@ class TelemetryDashboard:
         class CleanClient:
             def __init__(self):
                 self.positions = []
+                self.sales_history = []
                 self.total_realized_pnl_usd = 0.0
                 self.total_gas_paid_usd = 0.0
                 self.initial_capital_usd = initial_cap_usd
