@@ -152,6 +152,10 @@ async def position_watcher(
                         trade["current_price"] = current_price
                         peak_price = max(trade.get("peak_price", trade["entry_price"]), current_price)
                         trade["peak_price"] = peak_price
+                        trade["current_liq"] = current_liq
+                        trade["vol_m5"] = vol_m5
+                        trade["buys_m5"] = buys
+                        trade["sells_m5"] = sells
 
                         ratio = (
                             current_price / trade["entry_price"]
@@ -263,6 +267,9 @@ async def position_watcher(
 
                             stat_signal = last_signals[token_addr]
                             current_zscore = float(stat_signal.get("z_score", 0.0))
+                            trade["z_score"] = current_zscore
+                            trade["ofi"] = float(stat_signal.get("imbalance", 0.0))
+                            trade["stat_action"] = stat_signal.get("action", "HOLD")
                             stat_tag = (
                                 f" | Z: {current_zscore:+.2f} | "
                                 f"OFI: {stat_signal['imbalance']:+.2f} ({stat_signal['action']})"
@@ -402,11 +409,14 @@ async def position_watcher(
                     log.warning(f"Falha na checagem em lote ({chain_id}): {e}")
                     await asyncio.sleep(1.0)
 
+        # Atualização síncrona imediata do dashboard com o mercado em tempo real
+        if dashboard:
+            dashboard.generate_html_dashboard(execution_client, execution_client.risk_manager)
+
         now_check = time.time()
         if now_check - last_summary_ts >= PORTFOLIO_SUMMARY_INTERVAL_SEC:
             last_summary_ts = now_check
             if dashboard:
-                dashboard.generate_html_dashboard(execution_client, execution_client.risk_manager)
                 log.info("\n" + dashboard.format_terminal_view(execution_client, execution_client.risk_manager))
             else:
                 open_now = [p for p in execution_client.positions if p["status"] == "OPEN"]
@@ -550,6 +560,9 @@ async def market_scanner(
             open_positions.append(new_trade)
             open_addresses.add(addr_key)
             open_symbols.add(sym_key)
+
+            if dashboard:
+                dashboard.generate_html_dashboard(execution_client, risk_engine)
 
         await asyncio.sleep(SCAN_INTERVAL_SEC)
 

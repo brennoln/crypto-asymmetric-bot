@@ -92,7 +92,9 @@ def test_telemetry_generate_html(tmp_path):
         html_text = f.read()
 
     assert "GEM" in html_text
-    assert "BADCOIN" in html_text
+    # Moedas rejeitadas/não captadas não poluem o HTML (apenas no log/terminal)
+    assert "BADCOIN" not in html_text
+    assert "DexScreener" in html_text
     assert "Telemetria v0.8" in html_text
 
 

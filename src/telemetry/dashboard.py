@@ -154,7 +154,7 @@ class TelemetryDashboard:
         risk_manager: Any | None = None,
         output_path: str = "data/dashboard.html",
     ) -> str:
-        """Gera um arquivo HTML completo, autônomo e responsivo com auto-refresh para monitoramento."""
+        """Gera um arquivo HTML completo, autônomo e responsivo com métricas profundas da pool e auto-refresh."""
         uptime_sec = int(time.time() - self.start_time)
         uptime_str = f"{uptime_sec // 3600:02d}:{(uptime_sec % 3600) // 60:02d}:{uptime_sec % 60:02d}"
 
@@ -168,11 +168,12 @@ class TelemetryDashboard:
         gas_paid = getattr(execution_client, "total_gas_paid_usd", 0.0)
         net_balance = realized_pnl + unrealized_pnl - gas_paid
 
-        # Gera linhas da tabela de posições
+        # Gera linhas da tabela de posições com drawer expansível para cada moeda
         now = time.time()
         pos_rows = []
-        for p in open_positions:
+        for idx, p in enumerate(open_positions):
             sym = html.escape(str(p.get("token_symbol") or p.get("symbol") or "N/A"))
+            sym_id = f"coin_{idx}_{sym.replace(' ', '_').replace('.', '_')}"
             hold_min = self._calc_hold_min(p, now)
             entry_p = float(p.get("entry_price", 0.0) or 0.0)
             curr_p = float(p.get("current_price", entry_p) or entry_p)
@@ -185,14 +186,39 @@ class TelemetryDashboard:
                 peak = (peak_p / entry_p) if entry_p > 0 else 1.0
             stop = float(p.get("stop_multiplier", 0.65) or 0.65)
             pnl = self._calc_pnl(p)
-            is_rf = p.get("is_risk_free") or len(p.get("executed_targets", set())) > 0
+            executed_targets = set(p.get("executed_targets", set()) or set())
+            is_rf = p.get("is_risk_free") or len(executed_targets) > 0
             badge_class = "badge-rf" if is_rf else "badge-open"
             badge_text = "RISK-FREE" if is_rf else "ACTIVE"
             pnl_class = "text-green" if pnl >= 0 else "text-red"
 
+            # Métricas detalhadas da pool em tempo real
+            chain_id = html.escape(str(p.get("chain_id", "solana")).lower())
+            pair_addr = html.escape(str(p.get("pair_address", "")))
+            token_addr = html.escape(str(p.get("token_address", "")))
+            liq = float(p.get("current_liq", p.get("initial_liquidity_usd", 0.0)) or 0.0)
+            vol5m = float(p.get("vol_m5", 0.0) or 0.0)
+            buys = int(p.get("buys_m5", 0) or 0)
+            sells = int(p.get("sells_m5", 0) or 0)
+            ofi = float(p.get("ofi", 0.0) or 0.0)
+            z_score = float(p.get("z_score", 0.0) or 0.0)
+            ignition = float(p.get("ignition_score", 0.0) or 0.0)
+            impact = float(p.get("entry_price_impact", 0.0) or 0.0)
+            gas_fee = float(p.get("gas_fees_usd", 0.15) or 0.15)
+            dex_url = f"https://dexscreener.com/{chain_id}/{pair_addr}" if pair_addr else f"https://dexscreener.com/search?q={token_addr or sym}"
+
+            ofi_label = "Pressão Compradora (Agressores Ativos)" if ofi > 0 else ("Pressão Vendedora" if ofi < 0 else "Neutro")
+            ofi_color = "var(--green)" if ofi > 0 else ("var(--red)" if ofi < 0 else "var(--text-dim)")
+
+            # Status de cada degrau da escada de realização
+            t2 = "✅ ATINGIDO" if 2.0 in executed_targets else "⏳ PENDENTE"
+            t5 = "✅ ATINGIDO" if 5.0 in executed_targets else "⏳ PENDENTE"
+            t15 = "✅ ATINGIDO" if 15.0 in executed_targets else "⏳ PENDENTE"
+            t50 = "✅ ATINGIDO" if 50.0 in executed_targets else "⏳ PENDENTE"
+
             pos_rows.append(
-                f"""<tr>
-                    <td><strong>{sym}</strong></td>
+                f"""<tr class="pos-row" onclick="toggleDetails('{sym_id}')" title="Clique para expandir métricas em tempo real da pool">
+                    <td><strong class="token-title">{sym}</strong> <span class="expand-indicator" id="arrow-{sym_id}">▼</span></td>
                     <td>{hold_min:.1f}m</td>
                     <td>${entry_p:.6f}</td>
                     <td>${curr_p:.6f}</td>
@@ -201,30 +227,79 @@ class TelemetryDashboard:
                     <td>{stop:.2f}x</td>
                     <td class="{pnl_class}">${pnl:+.2f}</td>
                     <td><span class="badge {badge_class}">{badge_text}</span></td>
+                </tr>
+                <tr id="details-{sym_id}" class="details-row" style="display: none;">
+                    <td colspan="9">
+                        <div class="pool-detail-box">
+                            <div class="pool-header">
+                                <div>
+                                    <span class="pool-title">Métricas de Microestrutura & Pool ao Vivo — {sym}</span>
+                                    <span class="pool-chain">[{chain_id.upper()}]</span>
+                                </div>
+                                <a href="{dex_url}" target="_blank" class="btn-dex" onclick="event.stopPropagation()">
+                                    📈 Abrir Gráfico & Pool no DexScreener ↗
+                                </a>
+                            </div>
+
+                            <div class="metrics-subgrid">
+                                <div class="subcard">
+                                    <div class="subcard-label">Liquidez Atual da Pool</div>
+                                    <div class="subcard-val">${liq:,.2f}</div>
+                                </div>
+                                <div class="subcard">
+                                    <div class="subcard-label">Volume 5 Minutos</div>
+                                    <div class="subcard-val">${vol5m:,.2f} <span class="subtext">({buys}B / {sells}S)</span></div>
+                                </div>
+                                <div class="subcard">
+                                    <div class="subcard-label">Order Flow Imbalance (OFI)</div>
+                                    <div class="subcard-val" style="color: {ofi_color};">{ofi:+.2f} <span class="subtext">({ofi_label})</span></div>
+                                </div>
+                                <div class="subcard">
+                                    <div class="subcard-label">Momentum Z-Score</div>
+                                    <div class="subcard-val">{z_score:+.2f}</div>
+                                </div>
+                                <div class="subcard">
+                                    <div class="subcard-label">Ignition Score de Entrada</div>
+                                    <div class="subcard-val">{ignition:.1f} pts</div>
+                                </div>
+                                <div class="subcard">
+                                    <div class="subcard-label">Impacto AMM / Slippage</div>
+                                    <div class="subcard-val">+{impact*100:.2f}% <span class="subtext">(Gás: ${gas_fee:.2f})</span></div>
+                                </div>
+                            </div>
+
+                            <div class="ladder-title">🎯 Escada Convexa de Desrisco & Saídas (Holding Map)</div>
+                            <div class="ladder-grid">
+                                <div class="ladder-step {'step-done' if '✅' in t2 else ''}">
+                                    <span class="step-target">2.0x (Vender 35%)</span>
+                                    <span class="step-desc">Recupera 70% Principal</span>
+                                    <span class="step-status">{t2}</span>
+                                </div>
+                                <div class="ladder-step {'step-done' if '✅' in t5 else ''}">
+                                    <span class="step-target">5.0x (Vender 30%)</span>
+                                    <span class="step-desc">Trava +120% Lucro Líquido</span>
+                                    <span class="step-status">{t5}</span>
+                                </div>
+                                <div class="ladder-step {'step-done' if '✅' in t15 else ''}">
+                                    <span class="step-target">15.0x (Vender 20%)</span>
+                                    <span class="step-desc">Expansão de Convexidade</span>
+                                    <span class="step-status">{t15}</span>
+                                </div>
+                                <div class="ladder-step {'step-done' if '✅' in t50 else ''}">
+                                    <span class="step-target">50.0x (Vender 15%)</span>
+                                    <span class="step-desc">Moonbag (+1170% Lucro)</span>
+                                    <span class="step-status">{t50}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </td>
                 </tr>"""
             )
 
         if not pos_rows:
-            pos_table_content = '<tr><td colspan="9" class="text-muted text-center">Nenhuma posição aberta no momento. Scanner em busca de assimetria...</td></tr>'
+            pos_table_content = '<tr><td colspan="9" class="text-muted text-center" style="padding: 24px;">Nenhuma posição aberta no momento. Scanner em busca de assimetria...</td></tr>'
         else:
             pos_table_content = "\n".join(pos_rows)
-
-        # Gera linhas dos bloqueios de segurança
-        audit_rows = []
-        for b in reversed(self.blocked_events[-8:]):
-            audit_rows.append(
-                f"""<tr>
-                    <td class="text-muted">{b['timestamp']}</td>
-                    <td><strong>{html.escape(b['symbol'])}</strong></td>
-                    <td><span class="badge badge-blocked">REJEITADO</span></td>
-                    <td>{html.escape(b['reason'])}</td>
-                </tr>"""
-            )
-
-        if not audit_rows:
-            audit_table_content = '<tr><td colspan="4" class="text-muted text-center">Nenhum evento malicioso recente detectado.</td></tr>'
-        else:
-            audit_table_content = "\n".join(audit_rows)
 
         net_color = "#10b981" if net_balance >= 0 else "#ef4444"
 
@@ -232,14 +307,16 @@ class TelemetryDashboard:
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="refresh" content="3">
+    <meta http-equiv="refresh" content="2">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Asymmetric Momentum Engine - Telemetria v0.8</title>
+    <title>Asymmetric Momentum Engine — Telemetria v0.8</title>
     <style>
         :root {{
             --bg: #0b0f19;
             --surface: #111827;
+            --surface-hover: #1f293d;
             --border: #1f2937;
+            --border-highlight: #374151;
             --text: #f9fafb;
             --text-dim: #9ca3af;
             --accent: #3b82f6;
@@ -303,7 +380,15 @@ class TelemetryDashboard:
             border-bottom: 1px solid var(--border);
         }}
         th {{ background: #1a2234; color: var(--text-dim); font-weight: 600; font-size: 12px; text-transform: uppercase; }}
-        tr:last-child td {{ border-bottom: none; }}
+        tr.pos-row {{
+            cursor: pointer;
+            transition: background 0.15s ease;
+        }}
+        tr.pos-row:hover {{
+            background: var(--surface-hover);
+        }}
+        .token-title {{ color: #60a5fa; }}
+        .expand-indicator {{ font-size: 10px; color: var(--text-dim); margin-left: 4px; display: inline-block; transition: transform 0.2s; }}
         .badge {{
             display: inline-block;
             padding: 3px 8px;
@@ -313,22 +398,93 @@ class TelemetryDashboard:
         }}
         .badge-rf {{ background: rgba(16, 185, 129, 0.2); color: var(--green); border: 1px solid var(--green); }}
         .badge-open {{ background: rgba(59, 130, 246, 0.2); color: var(--accent); }}
-        .badge-blocked {{ background: rgba(239, 68, 68, 0.2); color: var(--red); border: 1px solid var(--red); }}
         .text-green {{ color: var(--green); }}
         .text-red {{ color: var(--red); }}
         .text-muted {{ color: var(--text-dim); }}
         .text-center {{ text-align: center; }}
-        .section-title {{ font-size: 16px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }}
+        .section-title {{ font-size: 16px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }}
+        .section-hint {{ font-size: 12px; font-weight: normal; color: var(--text-dim); }}
+
+        /* Painel detalhado de análise da moeda */
+        .details-row td {{
+            background: #0d1322;
+            padding: 18px 24px;
+            border-top: 1px dashed var(--border-highlight);
+        }}
+        .pool-detail-box {{
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }}
+        .pool-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+        .pool-title {{ font-size: 15px; font-weight: 700; color: #93c5fd; }}
+        .pool-chain {{ font-size: 12px; color: var(--text-dim); margin-left: 8px; font-weight: 600; }}
+        .btn-dex {{
+            background: #2563eb;
+            color: #ffffff;
+            text-decoration: none;
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: background 0.2s;
+        }}
+        .btn-dex:hover {{ background: #1d4ed8; }}
+        .metrics-subgrid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+        }}
+        .subcard {{
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 14px;
+        }}
+        .subcard-label {{ font-size: 11px; color: var(--text-dim); text-transform: uppercase; margin-bottom: 4px; font-weight: 600; }}
+        .subcard-val {{ font-size: 15px; font-weight: 700; }}
+        .subtext {{ font-size: 11px; font-weight: normal; color: var(--text-dim); }}
+
+        .ladder-title {{ font-size: 13px; font-weight: 700; color: var(--text); margin-top: 4px; }}
+        .ladder-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+        }}
+        .ladder-step {{
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }}
+        .ladder-step.step-done {{
+            border-color: var(--green);
+            background: rgba(16, 185, 129, 0.08);
+        }}
+        .step-target {{ font-size: 13px; font-weight: 700; color: #e5e7eb; }}
+        .step-desc {{ font-size: 11px; color: var(--text-dim); }}
+        .step-status {{ font-size: 11px; font-weight: 700; color: var(--yellow); margin-top: 4px; }}
+        .step-done .step-status {{ color: var(--green); }}
     </style>
 </head>
 <body>
     <header>
         <div>
             <h1><span class="pulse"></span> Asymmetric Momentum Engine — Telemetria v0.8</h1>
-            <div class="header-meta">Convex Holding Map & Anti-Cabal Distribution Monitor</div>
+            <div class="header-meta">Convex Holding Map & Anti-Cabal Quantitative Engine</div>
         </div>
         <div class="header-meta">
-            Uptime: <strong>{uptime_str}</strong> | Atualização automática: <strong>3s</strong>
+            Uptime: <strong>{uptime_str}</strong> | Atualização síncrona: <strong>2s</strong>
         </div>
     </header>
 
@@ -355,7 +511,10 @@ class TelemetryDashboard:
         </div>
     </div>
 
-    <div class="section-title">📊 Posições Ativas em Monitoramento</div>
+    <div class="section-title">
+        <span>📊 Posições Ativas em Carteira</span>
+        <span class="section-hint">💡 Dica: Clique em qualquer moeda para ver a análise profunda da pool e abrir no DexScreener</span>
+    </div>
     <table>
         <thead>
             <tr>
@@ -375,22 +534,51 @@ class TelemetryDashboard:
         </tbody>
     </table>
 
-    <div class="section-title">🛡️ Auditoria On-Chain & Proteção Anti-Cabal</div>
-    <table>
-        <thead>
-            <tr>
-                <th>Horário</th>
-                <th>Token</th>
-                <th>Ação</th>
-                <th>Motivo da Rejeição / Filtro</th>
-            </tr>
-        </thead>
-        <tbody>
-            {audit_table_content}
-        </tbody>
-    </table>
+    <script>
+        function toggleDetails(id) {{
+            const row = document.getElementById('details-' + id);
+            const arrow = document.getElementById('arrow-' + id);
+            if (!row) return;
+            const isHidden = row.style.display === 'none';
+            row.style.display = isHidden ? 'table-row' : 'none';
+            if (arrow) arrow.style.transform = isHidden ? 'rotate(180deg)' : 'rotate(0deg)';
+
+            // Persiste estado no localStorage para manter aberto durante auto-refresh
+            let openTokens = [];
+            try {{
+                openTokens = JSON.parse(localStorage.getItem('open_pool_rows') || '[]');
+            }} catch(e) {{}}
+            if (isHidden) {{
+                if (!openTokens.includes(id)) openTokens.push(id);
+            }} else {{
+                openTokens = openTokens.filter(t => t !== id);
+            }}
+            localStorage.setItem('open_pool_rows', JSON.stringify(openTokens));
+        }}
+
+        // Restaura gavetas abertas após o reload da página
+        window.addEventListener('DOMContentLoaded', () => {{
+            try {{
+                const openTokens = JSON.parse(localStorage.getItem('open_pool_rows') || '[]');
+                openTokens.forEach(id => {{
+                    const row = document.getElementById('details-' + id);
+                    const arrow = document.getElementById('arrow-' + id);
+                    if (row) {{
+                        row.style.display = 'table-row';
+                        if (arrow) arrow.style.transform = 'rotate(180deg)';
+                    }}
+                }});
+            }} catch(e) {{}}
+        }});
+    </script>
 </body>
 </html>"""
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(html_content)
+
+        return output_path
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
