@@ -543,17 +543,34 @@ async def market_scanner(
                 f"Ignition Score: {score:.1f} - {reason}"
             )
 
-            token_amount = risk_engine.calculate_position_size(candidate["price_usd"])
+            allocated_usd = risk_engine.calculate_trade_allocation(
+                cash_usd=execution_client.cash_usd,
+                active_positions_count=len(open_positions),
+            )
+            if allocated_usd <= 0:
+                log.warning(
+                    f"⛔ [SEM SALDO] Saldo livre em caixa: ${execution_client.cash_usd:.2f} "
+                    f"(R$ {execution_client.cash_brl:.2f}) insuficiente para alocação mínima. "
+                    f"Aguardando vendas/take-profits para liberar capital."
+                )
+                break
+
+            token_amount = risk_engine.calculate_position_size(
+                price_usd=candidate["price_usd"],
+                allocated_usd=allocated_usd,
+            )
             if token_amount <= 0:
                 log.warning(f"Preço inválido para {candidate['symbol']}. Entrada ignorada.")
                 _mark_seen(addr_key)
                 continue
 
-            await execution_client.open_position(
+            trade = await execution_client.open_position(
                 candidate=candidate,
                 token_amount=token_amount,
-                invested_usd=settings.POSITION_SIZE_USD,
+                invested_usd=allocated_usd,
             )
+            if trade is None:
+                continue
 
             _mark_seen(addr_key)
             new_trade = execution_client.positions[-1]
@@ -579,7 +596,10 @@ async def main():
     await db_manager.init_db()
 
     risk_engine = RiskManager()
-    execution_client = PaperExecutionClient(risk_manager=risk_engine)
+    execution_client = PaperExecutionClient(
+        risk_manager=risk_engine,
+        initial_capital_usd=settings.INITIAL_CAPITAL_USD,
+    )
     holding_map = HoldingMap()
     stat_strategy = StatisticalStrategy(
         window=settings.STAT_WINDOW_TICKS,

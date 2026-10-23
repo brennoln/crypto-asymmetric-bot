@@ -12,6 +12,17 @@ class Settings(BaseSettings):
     POSITION_SIZE_USD: float = 15.0
     MAX_DAILY_LOSS_USD: float = 100.0
 
+    # Gestão de Banca e Capital Simulado (v0.8.5)
+    INITIAL_CAPITAL_BRL: float = 100.0      # Saldo inicial simulado da conta em Reais (R$)
+    USD_BRL_RATE: float = 5.75              # Cotação de conversão USD/BRL
+    POSITION_SIZING_MODE: str = "DYNAMIC"   # "DYNAMIC" (proporcional à banca e slots) ou "FIXED"
+    MAX_CAPITAL_PER_TRADE_PCT: float = 0.25 # Máximo 25% da banca por posição (ex: ~R$ 25 por trade com R$ 100)
+    MIN_POSITION_SIZE_USD: float = 3.50     # Alocação mínima viável por operação para diluir taxas de gás
+
+    @property
+    def INITIAL_CAPITAL_USD(self) -> float:
+        return round(self.INITIAL_CAPITAL_BRL / self.USD_BRL_RATE, 2)
+
     # Fricção Realista de Mercado (v0.3 / v0.5)
     ENABLE_PRICE_IMPACT: bool = True        # Modela impacto de preço na curva AMM x * y = k
     GAS_FEE_USD: float = 0.15               # Taxa de rede estimada por swap (Solana priority + base fee = ~$0.15)

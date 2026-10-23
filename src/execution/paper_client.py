@@ -7,11 +7,11 @@ from src.utils.logger import log
 
 
 class PaperExecutionClient:
-    """Simulated order management system with realistic market friction (v0.3 / v0.5).
+    """Simulated order management system with realistic market friction and cash balance management.
 
     Models Automated Market Maker (AMM x * y = k) price impact, pool swap fees
-    (LP fee) and network transaction fees (gas/priority fees) so simulated performance
-    matches real decentralized exchange dynamics.
+    (LP fee), network transaction fees (gas/priority fees) and cash reserves so simulated
+    performance matches real decentralized exchange trading.
     """
 
     def __init__(
@@ -20,6 +20,7 @@ class PaperExecutionClient:
         gas_fee_usd: float | None = None,
         enable_price_impact: bool | None = None,
         lp_swap_fee_pct: float = 0.0,
+        initial_capital_usd: float | None = None,
     ):
         self.risk_manager = risk_manager
         self.gas_fee_usd = settings.GAS_FEE_USD if gas_fee_usd is None else gas_fee_usd
@@ -29,12 +30,65 @@ class PaperExecutionClient:
         self.lp_swap_fee_pct = lp_swap_fee_pct
         self.positions: list[dict] = []
 
-    def compute_price_impact(self, order_usd: float, pool_liquidity_usd: float) -> float:
-        """Calcula o impacto de preço estimado em uma AMM de produto constante (x * y = k).
+        # Gestão de Caixa e Banca de Trading (v0.8.5)
+        self.initial_capital_usd = float(
+            initial_capital_usd if initial_capital_usd is not None else 1000.0
+        )
+        self.cash_usd = self.initial_capital_usd
+        self.total_gas_paid_usd = 0.0
+        self.total_realized_pnl_usd = 0.0
 
-        Em pools simétricas, a reserva da moeda de cotação (USD) é R = L_total / 2.
-        O impacto de preço médio de uma ordem delta_x é delta_x / (R + delta_x).
-        """
+    @property
+    def cash_brl(self) -> float:
+        return self.cash_usd * settings.USD_BRL_RATE
+
+    @property
+    def equity_usd(self) -> float:
+        """Patrimônio líquido total da conta (Caixa livre + Valor de mercado das moedas abertas)."""
+        open_trades = [p for p in self.positions if p.get("status") == "OPEN"]
+        open_val = sum(
+            float(p.get("remaining_amount", 0.0) or 0.0)
+            * float(p.get("current_price", p.get("entry_price", 0.0)) or 0.0)
+            for p in open_trades
+        )
+        return self.cash_usd + open_val
+
+    @property
+    def equity_brl(self) -> float:
+        return self.equity_usd * settings.USD_BRL_RATE
+
+    @property
+    def allocated_usd(self) -> float:
+        """Capital atualmente investido nas posições abertas."""
+        open_trades = [p for p in self.positions if p.get("status") == "OPEN"]
+        return sum(
+            float(p.get("remaining_amount", 0.0) or 0.0)
+            * float(p.get("entry_price", 0.0) or 0.0)
+            for p in open_trades
+        )
+
+    @property
+    def allocated_brl(self) -> float:
+        return self.allocated_usd * settings.USD_BRL_RATE
+
+    @property
+    def total_pnl_usd(self) -> float:
+        """Lucro/Prejuízo Líquido total da conta desde a inicialização."""
+        return self.equity_usd - self.initial_capital_usd
+
+    @property
+    def total_pnl_brl(self) -> float:
+        return self.total_pnl_usd * settings.USD_BRL_RATE
+
+    @property
+    def total_pnl_pct(self) -> float:
+        """Variação percentual do patrimônio total da conta."""
+        if self.initial_capital_usd <= 0:
+            return 0.0
+        return (self.total_pnl_usd / self.initial_capital_usd) * 100.0
+
+    def compute_price_impact(self, order_usd: float, pool_liquidity_usd: float) -> float:
+        """Calcula o impacto de preço estimado em uma AMM de produto constante (x * y = k)."""
         if not self.enable_price_impact or pool_liquidity_usd <= 0 or order_usd <= 0:
             return 0.0
         quote_reserve = pool_liquidity_usd / 2.0
@@ -62,9 +116,20 @@ class PaperExecutionClient:
 
     async def open_position(
         self, candidate: dict, token_amount: float, invested_usd: float
-    ) -> dict:
+    ) -> dict | None:
         spot_price = float(candidate.get("price_usd", 0.0) or 0.0)
         pool_liq = float(candidate.get("liquidity_usd", 0.0) or 0.0)
+        initial_gas = self.gas_fee_usd
+
+        # Verificação e Débito de Caixa Real
+        total_cost = invested_usd + initial_gas
+        if self.cash_usd < total_cost:
+            log.warning(
+                f"⛔ [SEM SALDO] Saldo livre em caixa: ${self.cash_usd:.2f} (R$ {self.cash_brl:.2f}) "
+                f"menor que o custo necessário: ${total_cost:.2f} (R$ {total_cost * settings.USD_BRL_RATE:.2f}). "
+                f"Compra de {candidate['symbol']} rejeitada."
+            )
+            return None
 
         # 1. Price Impact de Compra e Taxa da Pool (LP Fee)
         buy_impact = self.compute_price_impact(invested_usd, pool_liq)
@@ -77,8 +142,9 @@ class PaperExecutionClient:
         else:
             actual_tokens = token_amount
 
-        # 2. Taxa de rede da transação de compra
-        initial_gas = self.gas_fee_usd
+        # Deduz do caixa simulado
+        self.cash_usd -= total_cost
+        self.total_gas_paid_usd += initial_gas
 
         trade = {
             "token_symbol": candidate["symbol"],
@@ -122,7 +188,8 @@ class PaperExecutionClient:
         log.info(
             f"🚀 [COMPRA PAPER] {candidate['symbol']} | "
             f"Preço Spot: ${spot_price:.8f} -> Exec: ${effective_entry_price:.8f} | "
-            f"Alocação: ${invested_usd:.2f} | "
+            f"Alocação: ${invested_usd:.2f} (R$ {invested_usd * settings.USD_BRL_RATE:.2f}) | "
+            f"Caixa Restante: ${self.cash_usd:.2f} (R$ {self.cash_brl:.2f}) | "
             f"Tokens: {actual_tokens:,.2f}{score_info}{impact_info}"
         )
         return trade
@@ -150,11 +217,18 @@ class PaperExecutionClient:
         trade["gas_fees_usd"] = trade.get("gas_fees_usd", 0.0) + self.gas_fee_usd
         trade["executed_targets"].add(multiplier)
 
+        # Devolve o dinheiro recebido para o caixa líquido de gás
+        exit_gas = self.gas_fee_usd
+        self.total_gas_paid_usd += exit_gas
+        self.cash_usd += max(0.0, revenue_usd - exit_gas)
+        self.total_realized_pnl_usd += (revenue_usd - (tokens_to_sell * trade["entry_price"]))
+
         net_so_far = self._net_pnl(trade)
         log.info(
             f"💰 [TAKE PROFIT {multiplier:.1f}x] {trade['token_symbol']} atingiu {multiplier:.1f}x! "
             f"Vendido {sell_pct * 100:.0f}% ({tokens_to_sell:,.2f} tokens) por ${revenue_usd:.2f} "
-            f"(Impacto: -{sell_impact * 100:.2f}% | Gás total: ${trade['gas_fees_usd']:.2f}) | "
+            f"(Impacto: -{sell_impact * 100:.2f}% | Gás: ${exit_gas:.2f}) | "
+            f"Caixa Livre: ${self.cash_usd:.2f} (R$ {self.cash_brl:.2f}) | "
             f"PnL Líquido até agora: ${net_so_far:+.2f}"
         )
 
@@ -183,7 +257,7 @@ class PaperExecutionClient:
         reason: str = "Time-Stop / Inércia",
         current_liq: float = 0.0,
     ):
-        """Vende a mercado o saldo restante de moedas que estagnaram para liberar o slot."""
+        """Vende a mercado o saldo restante de moedas que estagnaram para liberar o slot e caixa."""
         remaining = trade["remaining_amount"]
         gross_value = remaining * current_price
 
@@ -196,6 +270,11 @@ class PaperExecutionClient:
         trade["gas_fees_usd"] = trade.get("gas_fees_usd", 0.0) + self.gas_fee_usd
         trade["remaining_amount"] = 0.0
         trade["status"] = "STAGNANT"
+
+        exit_gas = self.gas_fee_usd
+        self.total_gas_paid_usd += exit_gas
+        self.cash_usd += max(0.0, recovered_usd - exit_gas)
+        self.total_realized_pnl_usd += (recovered_usd - (remaining * trade["entry_price"]))
 
         duration_sec = time.time() - trade["opened_timestamp"]
         await db_manager.close_trade(
@@ -211,6 +290,7 @@ class PaperExecutionClient:
         log_fn(
             f"⏳ [ROTAÇÃO / VENDA] {trade['token_symbol']} liquidado a mercado após {age_min:.1f}m. "
             f"Variação: {var_pct:+.1f}% | Recuperado: ${recovered_usd:.2f} (Impacto: -{sell_impact * 100:.2f}%) | "
+            f"Caixa Devolvido: ${self.cash_usd:.2f} (R$ {self.cash_brl:.2f}) | "
             f"{pnl_label}: ${net_pnl:+.2f} (Gás total: ${trade['gas_fees_usd']:.2f})"
         )
 
@@ -235,6 +315,11 @@ class PaperExecutionClient:
         trade["remaining_amount"] = 0.0
         trade["status"] = "DROPPED"
 
+        exit_gas = self.gas_fee_usd
+        self.total_gas_paid_usd += exit_gas
+        self.cash_usd += max(0.0, recovered_usd - exit_gas)
+        self.total_realized_pnl_usd += (recovered_usd - (remaining * trade["entry_price"]))
+
         duration_sec = time.time() - trade["opened_timestamp"]
         await db_manager.close_trade(trade, exit_reason=reason, duration_sec=duration_sec)
 
@@ -242,6 +327,7 @@ class PaperExecutionClient:
         log.warning(
             f"🚫 [STOP A MERCADO] {trade['token_symbol']} liquidado. "
             f"Motivo: {reason} | Recuperado: ${recovered_usd:.2f} (Impacto: -{sell_impact * 100:.2f}%) | "
+            f"Caixa Devolvido: ${self.cash_usd:.2f} (R$ {self.cash_brl:.2f}) | "
             f"PnL Líquido Real: {net_pnl:+.2f} (Gás total: ${trade['gas_fees_usd']:.2f})"
         )
 

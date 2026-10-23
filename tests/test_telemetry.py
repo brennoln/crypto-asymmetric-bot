@@ -35,7 +35,7 @@ def test_telemetry_terminal_view_empty():
     risk = MockRiskManager()
 
     view = dashboard.format_terminal_view(client, risk)
-    assert "ASYMMETRIC MOMENTUM ENGINE (v0.8)" in view
+    assert "ASYMMETRIC MOMENTUM ENGINE" in view
     assert "SLOTS: 0/5" in view
     assert "Nenhuma posição aberta" in view
 
