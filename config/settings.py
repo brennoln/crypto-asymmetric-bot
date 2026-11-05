@@ -32,15 +32,18 @@ class Settings(BaseSettings):
 
     # Capacidade do Portfólio e Rotação
     MAX_ACTIVE_POSITIONS: int = 10          # Limite de moedas simultâneas
-    MAX_HOLD_TIME_MINUTES: float = 20.0     # Tempo máximo de inércia antes de podar (20 min)
+    MAX_HOLD_TIME_MINUTES: float = 35.0     # Tempo máximo de inércia antes de podar (35 min)
     INERTIA_CHECK_MINUTES: float = 10.0     # Checagem de inércia: estagnação se Z-Score <= 0 e preço negativo por 10 min
     MIN_PROFIT_TO_EXTEND_TIME: float = 0.20 # +20% de lucro concede sobrevida à moeda
     WATCHER_INTERVAL_SEC: float = 4.0
 
-    # Parâmetros de Trailing Stop Monotônico e Contínuo (v0.5)
+    # Parâmetros de Trailing Stop Monotônico e Contínuo Ratchet (v0.5 / v0.9)
     TRAILING_ACTIVATION_RATIO: float = 1.40 # Ativa regime pleno após +40% de alta
     TRAILING_DROP_PRE_2X: float = 0.20      # Antes de dobrar: recuo de 20% do topo protege lucro (monotônico com Breakeven)
-    TRAILING_DROP_POST_2X: float = 0.50     # Após bater 2x (Risk-Free): permite 50% de retração para o runner buscar 5x e 25x
+    TRAILING_DROP_POST_2X: float = 0.35     # Após bater 2x (Risk-Free): recuo tolerado de 35%
+    TRAILING_DROP_POST_3X: float = 0.25     # Após bater 3x: recuo de apenas 25% para proteger ganho expressivo
+    TRAILING_FLOOR_POST_2X: float = 1.50    # Piso mínimo garantido de 1.50x após conquistar 2.0x
+    TRAILING_FLOOR_POST_3X: float = 2.20    # Piso mínimo garantido de 2.20x após conquistar 3.0x
 
     # Proteção de Breakeven e Trava Precoce de Lucro (v0.4)
     ENABLE_BREAKEVEN_PROTECTION: bool = True

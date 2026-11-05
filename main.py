@@ -307,29 +307,41 @@ async def position_watcher(
 
                         is_risk_free = 2.0 in trade["executed_targets"]
 
-                        # Determina stop_multiplier para exibição na telemetria
-                        if peak_ratio >= settings.TRAILING_ACTIVATION_RATIO:
-                            drop_th = settings.TRAILING_DROP_POST_2X if is_risk_free else settings.TRAILING_DROP_PRE_2X
-                            min_guard = 1.40 if is_risk_free else 1.18
+                        # Determina stop_multiplier para exibição na telemetria com Ratchet Progressivo (v0.9)
+                        if peak_ratio >= 3.0:
+                            drop_th = settings.TRAILING_DROP_POST_3X
+                            min_guard = settings.TRAILING_FLOOR_POST_3X
+                            trade["stop_multiplier"] = max(peak_ratio * (1.0 - drop_th), min_guard)
+                        elif peak_ratio >= 2.0 or is_risk_free:
+                            drop_th = settings.TRAILING_DROP_POST_2X
+                            min_guard = settings.TRAILING_FLOOR_POST_2X
+                            trade["stop_multiplier"] = max(peak_ratio * (1.0 - drop_th), min_guard)
+                        elif peak_ratio >= settings.TRAILING_ACTIVATION_RATIO:
+                            drop_th = settings.TRAILING_DROP_PRE_2X
+                            min_guard = 1.18
                             trade["stop_multiplier"] = max(peak_ratio * (1.0 - drop_th), min_guard)
                         elif settings.ENABLE_BREAKEVEN_PROTECTION and peak_ratio >= settings.BREAKEVEN_ACTIVATION_RATIO:
                             trade["stop_multiplier"] = max(peak_ratio * (1.0 - settings.BREAKEVEN_PULLBACK_DROP), settings.BREAKEVEN_FLOOR_RATIO)
                         else:
                             trade["stop_multiplier"] = 1.0 - settings.HARD_STOP_LOSS_PCT
 
-                        # 5a. Trailing Stop Dinâmico e Monotônico (Protege lucros após atingir >= 1.40x) (v0.5)
+                        # 5a. Trailing Stop Dinâmico e Monotônico com Ratchet Progressivo (v0.5 / v0.9)
                         if peak_ratio >= settings.TRAILING_ACTIVATION_RATIO:
                             drawdown_from_peak = (peak_price - current_price) / peak_price
-                            drop_threshold = (
-                                settings.TRAILING_DROP_POST_2X
-                                if is_risk_free
-                                else settings.TRAILING_DROP_PRE_2X
-                            )
-                            # Monotonicidade estrita: stop nunca cai abaixo do patamar conquistado no degrau anterior
-                            min_ratio_guard = 1.40 if is_risk_free else 1.18
+                            if peak_ratio >= 3.0:
+                                drop_threshold = settings.TRAILING_DROP_POST_3X
+                                min_ratio_guard = settings.TRAILING_FLOOR_POST_3X
+                                phase = "Runner Pós-3x (Piso 2.2x)"
+                            elif peak_ratio >= 2.0 or is_risk_free:
+                                drop_threshold = settings.TRAILING_DROP_POST_2X
+                                min_ratio_guard = settings.TRAILING_FLOOR_POST_2X
+                                phase = "Runner Pós-2x (Piso 1.5x)"
+                            else:
+                                drop_threshold = settings.TRAILING_DROP_PRE_2X
+                                min_ratio_guard = 1.18
+                                phase = "Pré-2x"
 
                             if drawdown_from_peak >= drop_threshold or ratio <= min_ratio_guard:
-                                phase = "Runner Pós-2x" if is_risk_free else "Pré-2x"
                                 await execution_client.drop_dead_position(
                                     trade=trade,
                                     reason=(

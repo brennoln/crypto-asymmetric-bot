@@ -17,9 +17,10 @@ class HoldingMap:
         self.targets = [
             HoldingTarget(multiplier=1.5, sell_percent=0.10),   # 1º Alvo: Trava lucro antecipado de 10% aos 1.50x
             HoldingTarget(multiplier=2.0, sell_percent=0.30),   # 2º Alvo: Recupera 60% do principal e vira Risk-Free
-            HoldingTarget(multiplier=5.0, sell_percent=0.25),   # 3º Alvo: Trava lucro pesado (+125% do capital inicial)
-            HoldingTarget(multiplier=15.0, sell_percent=0.20),  # 4º Alvo: Expansão parabólica (+300% do capital inicial)
-            HoldingTarget(multiplier=50.0, sell_percent=0.15),  # 5º Alvo: Moonbag assimétrica extrema (+750%)
+            HoldingTarget(multiplier=3.0, sell_percent=0.20),   # 3º Alvo: Captura topo modal de runners DEX (+60% do inicial)
+            HoldingTarget(multiplier=5.0, sell_percent=0.15),   # 4º Alvo: Trava lucro pesado (+75% do capital inicial)
+            HoldingTarget(multiplier=15.0, sell_percent=0.10),  # 5º Alvo: Expansão parabólica (+150% do capital inicial)
+            HoldingTarget(multiplier=50.0, sell_percent=0.15),  # 6º Alvo: Moonbag assimétrica extrema (+750%)
         ]
 
     def evaluate_exit(self, entry_price: float, current_price: float) -> list[str]:

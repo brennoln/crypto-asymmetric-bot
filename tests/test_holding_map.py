@@ -43,7 +43,7 @@ def test_evaluate_exit_is_empty_below_the_first_target():
 def test_evaluate_exit_reports_every_reached_target():
     actions = HoldingMap().evaluate_exit(entry_price=1.0, current_price=12.0)
 
-    assert len(actions) == 3  # 1.5x, 2.0x e 5.0x
+    assert len(actions) == 4  # 1.5x, 2.0x, 3.0x e 5.0x
 
 
 def test_evaluate_exit_reports_all_targets_on_a_full_parabolic_run():

@@ -274,6 +274,7 @@ class TelemetryDashboard:
             t_fee = "✅ PAGO" if p.get("fee_cover_executed") else "⏳ AGUARDA +R$ 6"
             t1_5 = "✅ ATINGIDO" if 1.5 in executed_targets else "⏳ PENDENTE"
             t2 = "✅ ATINGIDO" if 2.0 in executed_targets else "⏳ PENDENTE"
+            t3 = "✅ ATINGIDO" if 3.0 in executed_targets else "⏳ PENDENTE"
             t5 = "✅ ATINGIDO" if 5.0 in executed_targets else "⏳ PENDENTE"
             t15 = "✅ ATINGIDO" if 15.0 in executed_targets else "⏳ PENDENTE"
             t50 = "✅ ATINGIDO" if 50.0 in executed_targets else "⏳ PENDENTE"
@@ -348,13 +349,18 @@ class TelemetryDashboard:
                                     <span class="step-desc">Recupera 60% Principal (Risk-Free)</span>
                                     <span class="step-status">{t2}</span>
                                 </div>
+                                <div class="ladder-step {'step-done' if '✅' in t3 else ''}">
+                                    <span class="step-target">3.0x (Vender 20%)</span>
+                                    <span class="step-desc">Captura Topo Modal de Runners</span>
+                                    <span class="step-status">{t3}</span>
+                                </div>
                                 <div class="ladder-step {'step-done' if '✅' in t5 else ''}">
-                                    <span class="step-target">5.0x (Vender 25%)</span>
-                                    <span class="step-desc">Trava +125% Lucro Líquido</span>
+                                    <span class="step-target">5.0x (Vender 15%)</span>
+                                    <span class="step-desc">Trava +75% Lucro Líquido</span>
                                     <span class="step-status">{t5}</span>
                                 </div>
                                 <div class="ladder-step {'step-done' if '✅' in t15 else ''}">
-                                    <span class="step-target">15.0x (Vender 20%)</span>
+                                    <span class="step-target">15.0x (Vender 10%)</span>
                                     <span class="step-desc">Expansão de Convexidade</span>
                                     <span class="step-status">{t15}</span>
                                 </div>
