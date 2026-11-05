@@ -306,8 +306,9 @@ async def position_watcher(
                             )
 
                         is_risk_free = 2.0 in trade["executed_targets"]
+                        is_post_1_5x = (1.5 in trade["executed_targets"]) or peak_ratio >= 1.50
 
-                        # Determina stop_multiplier para exibição na telemetria com Ratchet Progressivo (v0.9)
+                        # Determina stop_multiplier para exibição na telemetria com Ratchet Progressivo (v0.9 / v0.9.1)
                         if peak_ratio >= 3.0:
                             drop_th = settings.TRAILING_DROP_POST_3X
                             min_guard = settings.TRAILING_FLOOR_POST_3X
@@ -315,6 +316,10 @@ async def position_watcher(
                         elif peak_ratio >= 2.0 or is_risk_free:
                             drop_th = settings.TRAILING_DROP_POST_2X
                             min_guard = settings.TRAILING_FLOOR_POST_2X
+                            trade["stop_multiplier"] = max(peak_ratio * (1.0 - drop_th), min_guard)
+                        elif is_post_1_5x:
+                            drop_th = settings.TRAILING_DROP_POST_1_5X
+                            min_guard = settings.TRAILING_FLOOR_POST_1_5X
                             trade["stop_multiplier"] = max(peak_ratio * (1.0 - drop_th), min_guard)
                         elif peak_ratio >= settings.TRAILING_ACTIVATION_RATIO:
                             drop_th = settings.TRAILING_DROP_PRE_2X
@@ -325,7 +330,7 @@ async def position_watcher(
                         else:
                             trade["stop_multiplier"] = 1.0 - settings.HARD_STOP_LOSS_PCT
 
-                        # 5a. Trailing Stop Dinâmico e Monotônico com Ratchet Progressivo (v0.5 / v0.9)
+                        # 5a. Trailing Stop Dinâmico e Monotônico com Ratchet Progressivo (v0.5 / v0.9 / v0.9.1)
                         if peak_ratio >= settings.TRAILING_ACTIVATION_RATIO:
                             drawdown_from_peak = (peak_price - current_price) / peak_price
                             if peak_ratio >= 3.0:
@@ -336,6 +341,10 @@ async def position_watcher(
                                 drop_threshold = settings.TRAILING_DROP_POST_2X
                                 min_ratio_guard = settings.TRAILING_FLOOR_POST_2X
                                 phase = "Runner Pós-2x (Piso 1.5x)"
+                            elif is_post_1_5x:
+                                drop_threshold = settings.TRAILING_DROP_POST_1_5X
+                                min_ratio_guard = settings.TRAILING_FLOOR_POST_1_5X
+                                phase = "Pós-1.5x (Breakeven Garantido 1.05x)"
                             else:
                                 drop_threshold = settings.TRAILING_DROP_PRE_2X
                                 min_ratio_guard = 1.18
@@ -389,10 +398,11 @@ async def position_watcher(
 
                         # 6. Poda por Inércia e Time-Stop (Não se aplica a posições já Risk-Free / 2.0x)
                         if not is_risk_free:
-                            # 6a. Invalidação Precoce aos 10 min: preço negativo e Z-Score de volume zerado/negativo
+                            # 6a. Fast-Cut de Deriva Negativa aos 15 min (v0.9.1)
                             if (
-                                trade_age_min >= settings.INERTIA_CHECK_MINUTES
-                                and ratio < 1.0
+                                settings.ENABLE_FAST_CUT_INERTIA
+                                and trade_age_min >= settings.INERTIA_FAST_CUT_MINUTES
+                                and ratio < settings.FAST_CUT_RATIO_THRESHOLD
                                 and current_zscore <= 0.0
                             ):
                                 await execution_client.drop_stagnant_position(
@@ -400,14 +410,32 @@ async def position_watcher(
                                     age_min=trade_age_min,
                                     current_price=current_price,
                                     reason=(
-                                        f"Inércia/Estagnação: preço negativo ({ratio:.2f}x) e "
-                                        f"Z-Score zerado ({current_zscore:.2f}) após {trade_age_min:.1f}m"
+                                        f"Fast-Cut de Deriva Negativa: queda para {ratio:.2f}x (<{settings.FAST_CUT_RATIO_THRESHOLD:.2f}x) "
+                                        f"sem tração compradora (Z={current_zscore:.2f}) aos {trade_age_min:.1f}m"
                                     ),
                                     current_liq=current_liq,
                                 )
                                 continue
 
-                            # 6b. Time-Stop aos 20 min: encerra se estagnou sem atingir o gatilho de sobrevida (+20%)
+                            # 6b. Invalidação Precoce aos 10 min: preço negativo e Z-Score de volume zerado/negativo
+                            if (
+                                trade_age_min >= settings.INERTIA_CHECK_MINUTES
+                                and ratio < 1.0
+                                and current_zscore <= -0.5
+                            ):
+                                await execution_client.drop_stagnant_position(
+                                    trade=trade,
+                                    age_min=trade_age_min,
+                                    current_price=current_price,
+                                    reason=(
+                                        f"Inércia/Estagnação: preço negativo ({ratio:.2f}x) e "
+                                        f"Z-Score negativo ({current_zscore:.2f}) após {trade_age_min:.1f}m"
+                                    ),
+                                    current_liq=current_liq,
+                                )
+                                continue
+
+                            # 6c. Time-Stop aos 35 min: encerra se estagnou sem atingir o gatilho de sobrevida (+20%)
                             if (
                                 trade_age_min >= settings.MAX_HOLD_TIME_MINUTES
                                 and ratio < (1.0 + settings.MIN_PROFIT_TO_EXTEND_TIME)
@@ -421,18 +449,27 @@ async def position_watcher(
                                 )
                                 continue
 
-                        # 7. Saída por Exaustão Estatística (OFI Vendedora)
-                        if (
-                            stat_signal
-                            and stat_signal["action"] == "SELL"
-                            and trade_age_min >= settings.STAT_MIN_AGE_FOR_EXIT_MIN
-                            and ratio < 1.50
-                        ):
-                            await execution_client.drop_dead_position(
-                                trade=trade,
-                                reason=f"Exaustão estatística: {stat_signal['reason']}",
-                                current_price=current_price,
-                                current_liq=current_liq,
+                        # 7. Saída por Exaustão Estatística e Microestrutura Crítica (OFI Vendedora)
+                        if stat_signal and trade_age_min >= settings.STAT_MIN_AGE_FOR_EXIT_MIN and ratio < 1.50:
+                            current_ofi = trade.get("ofi", 0.0)
+                            is_critical_exhaustion = (
+                                settings.ENABLE_MICROSTRUCTURAL_EXHAUSTION
+                                and current_ofi <= settings.CRITICAL_SELL_IMBALANCE
+                                and ratio <= settings.CRITICAL_SELL_PRICE_RATIO
+                            )
+                            if stat_signal["action"] == "SELL" or is_critical_exhaustion:
+                                reason_text = (
+                                    f"Exaustão de microestrutura crítica (OFI={current_ofi:.2f}, Preço={ratio:.2f}x)"
+                                    if is_critical_exhaustion
+                                    else f"Exaustão estatística: {stat_signal['reason']}"
+                                )
+                                await execution_client.drop_dead_position(
+                                    trade=trade,
+                                    reason=reason_text,
+                                    current_price=current_price,
+                                    current_liq=current_liq,
+                                )
+                                continue
                             )
                             continue
 

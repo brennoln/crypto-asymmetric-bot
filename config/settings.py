@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     MAX_CAPITAL_PER_TRADE_PCT: float = 0.35 # Alocação máxima de 35% da banca em pools profundas e alto ignition (~R$ 35 / ~$6.00)
     MIN_POSITION_SIZE_USD: float = 3.50     # Alocação mínima viável por operação para diluir taxas de gás
     MAX_AMM_PRICE_IMPACT_PCT: float = 0.0030 # Impacto máximo de preço tolerado na AMM (0.30% da reserva de cotação)
+    SHALLOW_POOL_THRESHOLD_USD: float = 35_000.0 # Limiar abaixo do qual pools sofrem penalização côncava de risco
+    SHALLOW_POOL_EXPONENT: float = 0.75          # Coeficiente côncavo de penalidade de profundidade de liquidez
 
     @property
     def INITIAL_CAPITAL_USD(self) -> float:
@@ -34,12 +36,17 @@ class Settings(BaseSettings):
     MAX_ACTIVE_POSITIONS: int = 10          # Limite de moedas simultâneas
     MAX_HOLD_TIME_MINUTES: float = 35.0     # Tempo máximo de inércia antes de podar (35 min)
     INERTIA_CHECK_MINUTES: float = 10.0     # Checagem de inércia: estagnação se Z-Score <= 0 e preço negativo por 10 min
+    ENABLE_FAST_CUT_INERTIA: bool = True    # Fast-cut de inércia negativa precoce (v0.9.1)
+    INERTIA_FAST_CUT_MINUTES: float = 15.0  # Janela de checagem do fast-cut (15 minutos)
+    FAST_CUT_RATIO_THRESHOLD: float = 0.95  # Se ratio < 0.95x aos 15m sem volume comprador, encerra posição
     MIN_PROFIT_TO_EXTEND_TIME: float = 0.20 # +20% de lucro concede sobrevida à moeda
     WATCHER_INTERVAL_SEC: float = 4.0
 
-    # Parâmetros de Trailing Stop Monotônico e Contínuo Ratchet (v0.5 / v0.9)
+    # Parâmetros de Trailing Stop Monotônico e Contínuo Ratchet (v0.5 / v0.9 / v0.9.1)
     TRAILING_ACTIVATION_RATIO: float = 1.40 # Ativa regime pleno após +40% de alta
     TRAILING_DROP_PRE_2X: float = 0.20      # Antes de dobrar: recuo de 20% do topo protege lucro (monotônico com Breakeven)
+    TRAILING_DROP_POST_1_5X: float = 0.25   # Recuo tolerado pós-1.5x (25% dá respiro para runners sem violar breakeven)
+    TRAILING_FLOOR_POST_1_5X: float = 1.05  # Piso mínimo garantido de 1.05x após 1.5x (Breakeven com taxas cobertas)
     TRAILING_DROP_POST_2X: float = 0.35     # Após bater 2x (Risk-Free): recuo tolerado de 35%
     TRAILING_DROP_POST_3X: float = 0.25     # Após bater 3x: recuo de apenas 25% para proteger ganho expressivo
     TRAILING_FLOOR_POST_2X: float = 1.50    # Piso mínimo garantido de 1.50x após conquistar 2.0x
@@ -91,6 +98,9 @@ class Settings(BaseSettings):
     STAT_IMBALANCE_BUY: float = 0.50
     STAT_IMBALANCE_SELL: float = -0.35
     STAT_MIN_AGE_FOR_EXIT_MIN: float = 1.5  # Tempo mínimo antes de aceitar saída estatística por fluxo
+    ENABLE_MICROSTRUCTURAL_EXHAUSTION: bool = True # Saída preventiva por exaustão de microestrutura
+    CRITICAL_SELL_IMBALANCE: float = -0.40         # Desequilíbrio severo de fluxo vendedor (vendas > 2.3x compras)
+    CRITICAL_SELL_PRICE_RATIO: float = 0.92        # Preço abaixo de 0.92x com OFI crítico ativa ejeção imediata
 
     # Endpoints Multi-Fonte do DexScreener
     DEXSCREENER_PROFILES_URL: str = "https://api.dexscreener.com/token-profiles/latest/v1"

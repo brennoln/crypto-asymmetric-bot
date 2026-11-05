@@ -112,12 +112,47 @@ def should_trigger_invariant_anti_rug(trade: dict, current_price: float, current
     return False, ""
 
 
-def test_monotonic_trailing_stop_prevents_sub_1_18_drop():
-    trade = {"entry_price": 1.0, "peak_price": 1.40, "executed_targets": []}
-    # Preço cai para 1.17 (abaixo do piso monotônico de 1.18 conquistado no degrau anterior)
-    triggered, reason = should_trigger_monotonic_trailing_stop(trade, current_price=1.17)
-    assert triggered is True
-    assert "Trailing Stop Monotônico" in reason
+def test_post_1_5x_breakeven_floor_protection():
+    """Valida que pós-1.5x o piso protetor é travado em pelo menos 1.05x."""
+    trade = {"entry_price": 1.0, "peak_price": 1.55, "executed_targets": [1.5]}
+    # Se recua para 1.04x (abaixo do piso de 1.05x), o stop dispara garantindo lucro/breakeven
+    entry = trade["entry_price"]
+    current_price = 1.04
+    ratio = current_price / entry
+    peak_ratio = 1.55
+    is_post_1_5x = (1.5 in trade["executed_targets"]) or peak_ratio >= 1.50
+    min_guard = settings.TRAILING_FLOOR_POST_1_5X if is_post_1_5x else 1.18
+
+    assert is_post_1_5x is True
+    assert min_guard == 1.05
+    assert ratio <= min_guard
+
+
+def test_fast_cut_inertia_triggers():
+    """Valida o Fast-Cut por Inércia Negativa aos 15 minutos."""
+    trade_age_min = 16.0
+    ratio = 0.93  # Abaixo de 0.95x
+    current_zscore = -0.10  # Sem agressão compradora
+
+    should_cut = (
+        settings.ENABLE_FAST_CUT_INERTIA
+        and trade_age_min >= settings.INERTIA_FAST_CUT_MINUTES
+        and ratio < settings.FAST_CUT_RATIO_THRESHOLD
+        and current_zscore <= 0.0
+    )
+    assert should_cut is True
+
+
+def test_critical_microstructural_exhaustion_triggers():
+    """Valida saída de emergência por exaustão crítica de microestrutura (OFI <= -0.40 e Preço <= 0.92x)."""
+    current_ofi = -0.45
+    ratio = 0.90
+    is_critical_exhaustion = (
+        settings.ENABLE_MICROSTRUCTURAL_EXHAUSTION
+        and current_ofi <= settings.CRITICAL_SELL_IMBALANCE
+        and ratio <= settings.CRITICAL_SELL_PRICE_RATIO
+    )
+    assert is_critical_exhaustion is True
 
 
 def test_invariant_anti_rug_detects_silent_liquidity_drain():

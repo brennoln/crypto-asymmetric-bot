@@ -61,6 +61,14 @@ class RiskManager:
             target = settings.INITIAL_CAPITAL_USD * 0.25
             return round(min(available_cash, max(settings.MIN_POSITION_SIZE_USD, target)), 2)
 
+        # Penalidade côncava para pools rasas (< $35k) para blindar contra slippage e risco de despejo brutal
+        liquidity_penalty = 1.0
+        if pool_liquidity_usd > 0 and pool_liquidity_usd < settings.SHALLOW_POOL_THRESHOLD_USD:
+            liquidity_penalty = min(
+                1.0,
+                (pool_liquidity_usd / settings.SHALLOW_POOL_THRESHOLD_USD) ** settings.SHALLOW_POOL_EXPONENT,
+            )
+
         # 1. Teto de impacto de preço na AMM (x * y = k): protege contra slippage excessivo
         quote_reserve = pool_liquidity_usd / 2.0
         max_allowed_by_impact = quote_reserve * settings.MAX_AMM_PRICE_IMPACT_PCT
@@ -75,11 +83,12 @@ class RiskManager:
 
         # 4. Dimensionamento Ótimo em USD
         base_target = settings.INITIAL_CAPITAL_USD * 0.25  # ~R$ 25 / $4.35
-        optimal_target = base_target * score_multiplier * depth_multiplier
+        optimal_target = base_target * score_multiplier * depth_multiplier * liquidity_penalty
 
-        # Limites de risco da banca: entre 15% e 35% da banca inicial
+        # Limites de risco da banca: entre 15% e 35% da banca inicial (teto penalizado para pools rasas)
         min_trade = round(max(settings.MIN_POSITION_SIZE_USD, settings.INITIAL_CAPITAL_USD * settings.MIN_CAPITAL_PER_TRADE_PCT), 2)
-        max_trade = round(settings.INITIAL_CAPITAL_USD * settings.MAX_CAPITAL_PER_TRADE_PCT, 2)
+        max_trade = round(settings.INITIAL_CAPITAL_USD * settings.MAX_CAPITAL_PER_TRADE_PCT * liquidity_penalty, 2)
+        max_trade = max(min_trade, max_trade)
 
         bounded_allocation = min(max_trade, max(min_trade, optimal_target))
 

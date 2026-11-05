@@ -93,3 +93,26 @@ def test_pool_based_optimal_allocation():
     assert alloc_high > alloc_low
     assert alloc_high <= round(settings.INITIAL_CAPITAL_USD * settings.MAX_CAPITAL_PER_TRADE_PCT, 2)
     assert alloc_low >= settings.MIN_POSITION_SIZE_USD
+
+
+def test_shallow_pool_allocation_penalty():
+    """Valida que pools abaixo de $35k sofrem penalidade côncava de dimensionamento de risco."""
+    risk = RiskManager()
+    cash = 100.0
+
+    alloc_deep = risk.calculate_trade_allocation(
+        cash_usd=cash,
+        pool_liquidity_usd=50_000.0,
+        vol_m5_usd=5_000.0,
+        ignition_score=80.0,
+    )
+    alloc_shallow = risk.calculate_trade_allocation(
+        cash_usd=cash,
+        pool_liquidity_usd=15_000.0,
+        vol_m5_usd=1_500.0,
+        ignition_score=80.0,
+    )
+
+    assert alloc_deep > alloc_shallow
+    # A alocação rasa deve ser expressivamente menor devido ao fator de liquidez
+    assert alloc_shallow < alloc_deep * 0.85
