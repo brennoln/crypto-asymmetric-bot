@@ -470,8 +470,6 @@ async def position_watcher(
                                     current_liq=current_liq,
                                 )
                                 continue
-                            )
-                            continue
 
                         # Log enxuto: mostra sempre que o mercado atualizar na API
                         if is_new_market_tick:
