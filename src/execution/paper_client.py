@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from config.settings import settings
 from data.database import db_manager
+from src.audit.regime_gate import regime_gate as default_regime_gate
 from src.utils.logger import log
 
 
@@ -21,8 +22,10 @@ class PaperExecutionClient:
         enable_price_impact: bool | None = None,
         lp_swap_fee_pct: float = 0.0,
         initial_capital_usd: float | None = None,
+        regime_gate=None,
     ):
         self.risk_manager = risk_manager
+        self.regime_gate = regime_gate if regime_gate is not None else default_regime_gate
         self.gas_fee_usd = settings.GAS_FEE_USD if gas_fee_usd is None else gas_fee_usd
         self.enable_price_impact = (
             settings.ENABLE_PRICE_IMPACT if enable_price_impact is None else enable_price_impact
@@ -321,6 +324,13 @@ class PaperExecutionClient:
             )
             net_pnl = self._settle(trade)
             trade["net_pnl_usd"] = net_pnl
+            if self.regime_gate:
+                self.regime_gate.record_trade_exit(
+                    exit_multiplier=trade.get("exit_multiplier", 1.0),
+                    peak_multiplier=trade.get("peak_multiplier", 1.0),
+                    exit_reason="Take-Profit",
+                    exit_timestamp=trade.get("closed_timestamp", time.time()),
+                )
             log.info(
                 f"🏁 [POSIÇÃO ENCERRADA] {trade['token_symbol']} realizou todos os alvos. "
                 f"PnL Líquido Real: {net_pnl:+.2f} (Taxas totais: ${trade['gas_fees_usd']:.2f})"
@@ -367,6 +377,14 @@ class PaperExecutionClient:
 
         net_pnl = self._settle(trade)
         trade["net_pnl_usd"] = net_pnl
+
+        if self.regime_gate:
+            self.regime_gate.record_trade_exit(
+                exit_multiplier=trade.get("exit_multiplier", 1.0),
+                peak_multiplier=trade.get("peak_multiplier", 1.0),
+                exit_reason=reason,
+                exit_timestamp=trade.get("closed_timestamp", time.time()),
+            )
 
         # Registra no histórico de vendas
         sold_cost_usd = remaining * trade["entry_price"]
@@ -441,6 +459,14 @@ class PaperExecutionClient:
         net_pnl = self._settle(trade)
         trade["net_pnl_usd"] = net_pnl
 
+        if self.regime_gate:
+            self.regime_gate.record_trade_exit(
+                exit_multiplier=trade.get("exit_multiplier", 1.0),
+                peak_multiplier=trade.get("peak_multiplier", 1.0),
+                exit_reason=reason,
+                exit_timestamp=trade.get("closed_timestamp", time.time()),
+            )
+
         # Registra no histórico de vendas
         sold_cost_usd = remaining * trade["entry_price"]
         has_prior_sales = any(s["token_symbol"] == trade["token_symbol"] for s in self.sales_history)
@@ -488,6 +514,14 @@ class PaperExecutionClient:
         await db_manager.close_trade(trade, exit_reason=reason, duration_sec=duration_sec)
 
         net_pnl = self._settle(trade)
+
+        if self.regime_gate:
+            self.regime_gate.record_trade_exit(
+                exit_multiplier=trade.get("exit_multiplier", 0.0),
+                peak_multiplier=trade.get("peak_multiplier", 1.0),
+                exit_reason=reason,
+                exit_timestamp=trade.get("closed_timestamp", time.time()),
+            )
 
         self.sales_history.append({
             "token_symbol": trade["token_symbol"],

@@ -1,28 +1,31 @@
-# Asymmetric Momentum Engine (v0.9.1 - Quantitative Execution & Telemetry)
+# Asymmetric Momentum Engine (v0.9.2 - Market Regime & Dynamic Timing)
 
-An asynchronous, event-driven quantitative trading engine engineered to harvest right-tail fat-tailed distributions in decentralized liquidity pools through dynamic microstructural filtering, statistical anomaly detection, convex risk management, and asymmetric execution.
+An asynchronous, event-driven quantitative trading engine engineered to harvest right-tail fat-tailed distributions in decentralized liquidity pools through dynamic microstructural filtering, statistical anomaly detection, convex risk management, market regime gates, and asymmetric execution.
 
-> **Architecture Status & Release Notice (v0.9.1)**  
-> Version **0.9.1** introduces multi-tier Ratchet Trailing Stops, concave liquidity-depth positioning, automatic gas-fee coverage, and an expanded 6-tier convex holding ladder:
-> 1. **Real-Time Telemetry Dashboard (TUI & Web):** Live tabular monitoring of open slots, entry prices, current vs. peak multiples, ratchet trailing stop floors, unrealized PnL, Real Cash vs. Liquidated Equity, and an interactive drawer for past trade history.
-> 2. **Standalone HTML Live Dashboard (`data/dashboard.html`):** Dark-mode responsive web interface with a 3-second auto-refresh cycle, performance cards, active positions table, and on-chain anti-rug audit log.
-> 3. **Convex Holding Map (6-Tier Asymmetric Ladder):**
+> **Architecture Status & Release Notice (v0.9.2)**  
+> Version **0.9.2** introduces low-latency **Market Timing & Macro Regime Gates** to prevent overtrading during low-beta consolidation regimes and macro market stress:
+> 1. **Zero-Inline Latency Macro Regime Gate:** Asynchronous background polling of the network base asset ($SOL / ETH$) to detect downside volatility. Vetoes new pool acquisitions if base asset is under severe 1h drawdown ($SOL_{1h} < -2.0\%$), reading cached memory state with $< 0.001\text{ ms}$ overhead on the execution hot-path.
+> 2. **Sequential Stagnation Circuit Breaker:** Dynamically detects sideways "chop" market regimes. If 2 consecutive positions exit via Time-Stop/Inertia without exceeding $1.05\times$ peak multiple, the engine enters an automatic **3-hour Cooldown**, halting capital deployment to eliminate churn and fee erosion.
+> 3. **Session Liquidity Clustering (Dead Zone vs. Golden Hours):** Gating based on global liquidity participation. Automatically scales position sizing ($-50\%$) and raises statistical anomaly thresholds ($Z \ge 2.2$) during the European night / US early morning Dead Zone (04:00–10:00 UTC), while unlocking maximum allocation during active Golden Hours (13:00–23:00 UTC).
+> 4. **Real-Time Telemetry Dashboard (TUI & Web):** Live tabular monitoring of open slots, entry prices, current vs. peak multiples, ratchet trailing stop floors, unrealized PnL, Real Cash vs. Liquidated Equity, and an interactive drawer for past trade history.
+> 5. **Standalone HTML Live Dashboard (`data/dashboard.html`):** Dark-mode responsive web interface with a 3-second auto-refresh cycle, performance cards, active positions table, and on-chain anti-rug audit log.
+> 6. **Convex Holding Map (6-Tier Asymmetric Ladder):**
 >    * $1.5\times$ (liquidate $10\% \to$ locks early profit and guarantees breakeven floor at $1.05\times$)
 >    * $2.0\times$ (liquidate $30\% \to$ recovers $60\%$ principal, turning trade *Risk-Free*)
 >    * $3.0\times$ (liquidate $20\% \to$ locks $+60\%$ initial capital, ratchet stop floor moves to $2.20\times$)
 >    * $5.0\times$ (liquidate $15\% \to$ locks $+75\%$ net gain)
 >    * $15.0\times$ (liquidate $10\% \to$ captures parabolic expansion)
 >    * $50.0\times$ (*Moonbag*, liquidate $15\% \to +750\%$ net return)
-> 4. **Progressive Ratchet Trailing Stop:** Guaranteed monotonically rising stop floors:
+> 7. **Progressive Ratchet Trailing Stop:** Guaranteed monotonically rising stop floors:
 >    * *Pre-2x:* $20\%$ drop threshold, $1.18\times$ floor ($1.05\times$ strictly locked post-1.5x)
 >    * *Post-2x (Risk-Free):* $35\%$ drop threshold, $1.50\times$ floor
 >    * *Post-3x (Runner):* $25\%$ drop threshold, $2.20\times$ floor
-> 5. **Dual-Stage Inertia & Fast-Cut Pruning:**
+> 8. **Dual-Stage Inertia & Fast-Cut Pruning:**
 >    * *15-Minute Fast-Cut:* Instantly liquidates positions trading $< 0.95\times$ with zero momentum aggression ($Z \le 0$).
 >    * *35-Minute Capacity Time-Stop:* Liquidates stagnant positions failing to reach $+20\%$ gain to rotate capital.
-> 6. **Concave Liquidity Penalty & AMM Impact Cap:** Scaled allocation for pools below $\$35\text{k}$ liquidity using a concave depth factor $\left(\frac{L}{\$35.000}\right)^{0.75}$ to protect against AMM exit slippage.
-> 7. **Anti-Cabal & Holder Concentration Guards:** Rejects dev holdings $> 10\%$, single whales $> 15\%$, top 10 wallets $> 30\%$, and connected insider networks $> 15\%$.
-> 8. **Invariant Soft-Rug Detector ($\Lambda_t$):** Enforces AMM $x \cdot y = k$ liquidity-price coherence ($\Lambda_t = \frac{L_t / L_0}{\sqrt{P_t / P_0}} < 0.85$) to liquidate before pool collapse.
+> 9. **Concave Liquidity Penalty & AMM Impact Cap:** Scaled allocation for pools below $\$35\text{k}$ liquidity using a concave depth factor $\left(\frac{L}{\$35.000}\right)^{0.75}$ to protect against AMM exit slippage.
+> 10. **Anti-Cabal & Holder Concentration Guards:** Rejects dev holdings $> 10\%$, single whales $> 15\%$, top 10 wallets $> 30\%$, and connected insider networks $> 15\%$.
+> 11. **Invariant Soft-Rug Detector ($\Lambda_t$):** Enforces AMM $x \cdot y = k$ liquidity-price coherence ($\Lambda_t = \frac{L_t / L_0}{\sqrt{P_t / P_0}} < 0.85$) to liquidate before pool collapse.
 
 ---
 

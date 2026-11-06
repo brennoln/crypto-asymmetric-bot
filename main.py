@@ -16,6 +16,7 @@ import pandas as pd
 from config.settings import settings
 from data.database import db_manager
 from src.audit.holder_analyzer import SecurityAuditor
+from src.audit.regime_gate import regime_gate
 from src.execution.paper_client import PaperExecutionClient
 from src.risk.position_sizer import RiskManager
 from src.scanner.dex_scanner import DexScanner
@@ -540,6 +541,15 @@ async def market_scanner(
             await asyncio.sleep(CIRCUIT_BREAKER_COOLDOWN_SEC)
             continue
 
+        # Verificação em memória do Circuit Breaker de Estagnação Sequencial (< 0.0001 ms)
+        cooling, cool_reason, rem_sec = regime_gate.is_in_cooldown()
+        if cooling:
+            log.warning(
+                f"🛑 [REGIME COOLDOWN] {cool_reason} ({rem_sec / 60.0:.0f}m restantes). Pausando entradas..."
+            )
+            await asyncio.sleep(CIRCUIT_BREAKER_COOLDOWN_SEC)
+            continue
+
         open_positions = [p for p in execution_client.positions if p["status"] == "OPEN"]
         if len(open_positions) >= settings.MAX_ACTIVE_POSITIONS:
             log.info(
@@ -579,6 +589,14 @@ async def market_scanner(
             if candidate.get("age_minutes", 0.0) > (settings.MAX_POOL_AGE_HOURS * 60):
                 _mark_seen(addr_key)
                 continue
+
+            # 1. Filtro de Regime de Mercado e Janela de Liquidez (Zero inline latency: <0.001 ms)
+            regime_ok, regime_reason, size_multiplier = regime_gate.audit_candidate(candidate)
+            if not regime_ok:
+                log.info(f"🛑 [REGIME GATE] {candidate.get('symbol', 'UNKNOWN')} vetado: {regime_reason}")
+                _mark_seen(addr_key)
+                continue
+            candidate["regime_size_multiplier"] = size_multiplier
 
             passed, reason = SecurityAuditor.audit_token(candidate)
             if not passed:
@@ -626,6 +644,7 @@ async def market_scanner(
                 pool_liquidity_usd=float(candidate.get("liquidity_usd", 0.0) or 0.0),
                 vol_m5_usd=float(candidate.get("vol_m5", 0.0) or 0.0),
                 ignition_score=float(candidate.get("ignition_score", 0.0) or 0.0),
+                regime_size_multiplier=float(candidate.get("regime_size_multiplier", 1.0) or 1.0),
             )
             if allocated_usd <= 0:
                 log.warning(
@@ -693,7 +712,12 @@ async def main():
 
     try:
         async with aiohttp.ClientSession() as session:
+            # Sincronização inicial rápida do ativo base (SOL) para calibrar o regime macro
+            if settings.ENABLE_MACRO_REGIME_GATE:
+                await regime_gate.update_macro_data(session)
+
             tasks = asyncio.gather(
+                regime_gate.run_background_macro_tracker(session),
                 market_scanner(session, execution_client, risk_engine, dashboard=dashboard),
                 position_watcher(session, execution_client, holding_map, stat_strategy, dashboard=dashboard),
             )

@@ -43,22 +43,23 @@ class RiskManager:
         pool_liquidity_usd: float = 0.0,
         vol_m5_usd: float = 0.0,
         ignition_score: float = 0.0,
+        regime_size_multiplier: float = 1.0,
     ) -> float:
-        """Calcula o montante ótimo em USD a ser alocado para compra maximizando retorno com base na liquidez da pool e momentum."""
+        """Calcula o montante ótimo em USD a ser alocado para compra maximizando retorno com base na liquidez da pool, momentum e regime de mercado."""
         min_required = settings.MIN_POSITION_SIZE_USD + settings.GAS_FEE_USD
         if cash_usd < min_required:
             return 0.0
 
         if settings.POSITION_SIZING_MODE == "FIXED":
             if cash_usd >= (settings.POSITION_SIZE_USD + settings.GAS_FEE_USD):
-                return settings.POSITION_SIZE_USD
+                return settings.POSITION_SIZE_USD * regime_size_multiplier
             return 0.0
 
         available_cash = cash_usd - settings.GAS_FEE_USD
 
         # Se não foram fornecidos dados de pool, usa o padrão proporcional de 25% da banca
         if pool_liquidity_usd <= 0:
-            target = settings.INITIAL_CAPITAL_USD * 0.25
+            target = settings.INITIAL_CAPITAL_USD * 0.25 * regime_size_multiplier
             return round(min(available_cash, max(settings.MIN_POSITION_SIZE_USD, target)), 2)
 
         # Penalidade côncava para pools rasas (< $35k) para blindar contra slippage e risco de despejo brutal
@@ -81,13 +82,14 @@ class RiskManager:
         turnover_ratio = (vol_m5_usd / max(100.0, pool_liquidity_usd)) if pool_liquidity_usd > 0 else 0.0
         depth_multiplier = min(1.25, max(0.85, 0.85 + (turnover_ratio * 4.0)))
 
-        # 4. Dimensionamento Ótimo em USD
+        # 4. Dimensionamento Ótimo em USD com multiplicador dinâmico de regime
         base_target = settings.INITIAL_CAPITAL_USD * 0.25  # ~R$ 25 / $4.35
-        optimal_target = base_target * score_multiplier * depth_multiplier * liquidity_penalty
+        regime_factor = max(0.20, min(1.5, regime_size_multiplier))
+        optimal_target = base_target * score_multiplier * depth_multiplier * liquidity_penalty * regime_factor
 
         # Limites de risco da banca: entre 15% e 35% da banca inicial (teto penalizado para pools rasas)
         min_trade = round(max(settings.MIN_POSITION_SIZE_USD, settings.INITIAL_CAPITAL_USD * settings.MIN_CAPITAL_PER_TRADE_PCT), 2)
-        max_trade = round(settings.INITIAL_CAPITAL_USD * settings.MAX_CAPITAL_PER_TRADE_PCT * liquidity_penalty, 2)
+        max_trade = round(settings.INITIAL_CAPITAL_USD * settings.MAX_CAPITAL_PER_TRADE_PCT * liquidity_penalty * regime_factor, 2)
         max_trade = max(min_trade, max_trade)
 
         bounded_allocation = min(max_trade, max(min_trade, optimal_target))

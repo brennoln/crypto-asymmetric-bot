@@ -108,5 +108,23 @@ class Settings(BaseSettings):
     DEXSCREENER_BOOSTS_TOP_URL: str = "https://api.dexscreener.com/token-boosts/top/v1"
     DEXSCREENER_TOKEN_URL: str = "https://api.dexscreener.com/latest/dex/tokens"
 
+    # Filtro de Regime de Mercado, Timing Dinâmico e Circuit Breakers (v0.9.2)
+    ENABLE_MACRO_REGIME_GATE: bool = True
+    MACRO_BASE_TOKEN_ADDRESS: str = "So11111111111111111111111111111111111111112" # WSOL na Solana
+    MACRO_MIN_1H_RETURN_PCT: float = -2.0  # Veto se ativo base (SOL) cair > 2.0% na última hora
+    MACRO_POLL_INTERVAL_SEC: float = 45.0  # Frequência da thread assíncrona em segundo plano
+
+    ENABLE_SESSION_LIQUIDITY_GATE: bool = True
+    DEAD_ZONE_START_UTC_HOUR: int = 4      # 04:00 UTC (01h Brasília)
+    DEAD_ZONE_END_UTC_HOUR: int = 10       # 10:00 UTC (07h Brasília)
+    DEAD_ZONE_STRICT_MODE: bool = False    # Se True veta 100%; se False exige super-anomalia e reduz sizing
+    DEAD_ZONE_MIN_Z_SCORE: float = 2.2     # Z-Score mínimo exigido durante a Zona Morta
+    DEAD_ZONE_SIZE_MULTIPLIER: float = 0.50 # Reduz o sizing em 50% na Zona Morta
+
+    ENABLE_SEQUENTIAL_STAGNATION_BREAKER: bool = True
+    CONSECUTIVE_STAGNANT_THRESHOLD: int = 2     # Quantidade de time-stops seguidos para armar o disjuntor
+    STAGNANT_MAX_PEAK_MULTIPLE: float = 1.05    # Considera estagnado se o pico do trade não passou de 1.05x
+    STAGNANT_COOLDOWN_SECONDS: float = 10800.0  # 3 horas de cooldown para estancar perdas em regime de chop
+
 
 settings = Settings()
