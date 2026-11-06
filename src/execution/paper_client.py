@@ -252,8 +252,10 @@ class PaperExecutionClient:
         current_price: float,
         current_liq: float = 0.0,
         custom_label: str | None = None,
+        exit_timestamp: float | None = None,
     ):
         """Executa a liquidação parcial programada pelo Holding Map considerando fricção."""
+        now = exit_timestamp or trade.get("current_timestamp") or time.time()
         tokens_to_sell = min(trade["initial_amount"] * sell_pct, trade["remaining_amount"])
         gross_value = tokens_to_sell * current_price
 
@@ -291,8 +293,8 @@ class PaperExecutionClient:
             "recovered_usd": revenue_usd,
             "gas_fee_usd": exit_gas,
             "net_pnl_usd": sale_net_pnl,
-            "timestamp": time.time(),
-            "duration_sec": time.time() - trade["opened_timestamp"],
+            "timestamp": now,
+            "duration_sec": now - trade["opened_timestamp"],
             "chain_id": trade.get("chain_id", "solana"),
             "pair_address": trade.get("pair_address", ""),
             "token_address": trade.get("token_address", ""),
@@ -314,8 +316,8 @@ class PaperExecutionClient:
             trade["exit_price"] = effective_sell_price
             trade["exit_reason"] = "Todos os alvos do Holding Map realizados"
             trade["exit_multiplier"] = current_price / trade["entry_price"] if trade["entry_price"] > 0 else 1.0
-            trade["closed_timestamp"] = time.time()
-            trade["duration_sec"] = time.time() - trade["opened_timestamp"]
+            trade["closed_timestamp"] = now
+            trade["duration_sec"] = now - trade["opened_timestamp"]
             duration_sec = trade["duration_sec"]
             await db_manager.close_trade(
                 trade,
@@ -329,7 +331,7 @@ class PaperExecutionClient:
                     exit_multiplier=trade.get("exit_multiplier", 1.0),
                     peak_multiplier=trade.get("peak_multiplier", 1.0),
                     exit_reason="Take-Profit",
-                    exit_timestamp=trade.get("closed_timestamp", time.time()),
+                    exit_timestamp=now,
                 )
             log.info(
                 f"🏁 [POSIÇÃO ENCERRADA] {trade['token_symbol']} realizou todos os alvos. "
@@ -345,8 +347,10 @@ class PaperExecutionClient:
         current_price: float,
         reason: str = "Time-Stop / Inércia",
         current_liq: float = 0.0,
+        exit_timestamp: float | None = None,
     ):
         """Vende a mercado o saldo restante de moedas que estagnaram para liberar o slot e caixa."""
+        now = exit_timestamp or trade.get("current_timestamp") or time.time()
         remaining = trade["remaining_amount"]
         gross_value = remaining * current_price
 
@@ -363,8 +367,8 @@ class PaperExecutionClient:
         trade["exit_price"] = effective_sell_price
         trade["exit_reason"] = reason
         trade["exit_multiplier"] = current_price / trade["entry_price"] if trade["entry_price"] > 0 else 1.0
-        trade["closed_timestamp"] = time.time()
-        trade["duration_sec"] = time.time() - trade["opened_timestamp"]
+        trade["closed_timestamp"] = now
+        trade["duration_sec"] = now - trade["opened_timestamp"]
 
         exit_gas = self.gas_fee_usd
         self.total_gas_paid_usd += exit_gas
@@ -383,7 +387,7 @@ class PaperExecutionClient:
                 exit_multiplier=trade.get("exit_multiplier", 1.0),
                 peak_multiplier=trade.get("peak_multiplier", 1.0),
                 exit_reason=reason,
-                exit_timestamp=trade.get("closed_timestamp", time.time()),
+                exit_timestamp=now,
             )
 
         # Registra no histórico de vendas
@@ -428,8 +432,10 @@ class PaperExecutionClient:
         reason: str,
         current_price: float,
         current_liq: float = 0.0,
+        exit_timestamp: float | None = None,
     ):
         """Vende a mercado o saldo restante ao disparar stop técnico, fluxo ou dreno de liquidez."""
+        now = exit_timestamp or trade.get("current_timestamp") or time.time()
         remaining = trade["remaining_amount"]
         gross_value = remaining * current_price
 
@@ -446,8 +452,8 @@ class PaperExecutionClient:
         trade["exit_price"] = effective_sell_price
         trade["exit_reason"] = reason
         trade["exit_multiplier"] = current_price / trade["entry_price"] if trade["entry_price"] > 0 else 1.0
-        trade["closed_timestamp"] = time.time()
-        trade["duration_sec"] = time.time() - trade["opened_timestamp"]
+        trade["closed_timestamp"] = now
+        trade["duration_sec"] = now - trade["opened_timestamp"]
 
         exit_gas = self.gas_fee_usd
         self.total_gas_paid_usd += exit_gas
@@ -464,7 +470,7 @@ class PaperExecutionClient:
                 exit_multiplier=trade.get("exit_multiplier", 1.0),
                 peak_multiplier=trade.get("peak_multiplier", 1.0),
                 exit_reason=reason,
-                exit_timestamp=trade.get("closed_timestamp", time.time()),
+                exit_timestamp=now,
             )
 
         # Registra no histórico de vendas
@@ -498,16 +504,17 @@ class PaperExecutionClient:
             f"PnL Líquido Real: {net_pnl:+.2f} (Gás total: ${trade['gas_fees_usd']:.2f})"
         )
 
-    async def close_position_loss(self, trade: dict, reason: str):
+    async def close_position_loss(self, trade: dict, reason: str, exit_timestamp: float | None = None):
         """Encerra a posição em caso de rugpull absoluto (onde a liquidez zerou por completo)."""
+        now = exit_timestamp or trade.get("current_timestamp") or time.time()
         trade["status"] = "DEAD"
         trade["remaining_amount"] = 0.0
         trade["exit_price"] = 0.0
         trade["exit_reason"] = reason
         trade["recovered_usd"] = trade.get("recovered_usd", 0.0)
         trade["exit_multiplier"] = 0.0
-        trade["closed_timestamp"] = time.time()
-        trade["duration_sec"] = time.time() - trade["opened_timestamp"]
+        trade["closed_timestamp"] = now
+        trade["duration_sec"] = now - trade["opened_timestamp"]
         trade["net_pnl_usd"] = -trade["invested_usd"] - trade.get("gas_fees_usd", 0.0)
 
         duration_sec = trade["duration_sec"]
@@ -520,7 +527,7 @@ class PaperExecutionClient:
                 exit_multiplier=trade.get("exit_multiplier", 0.0),
                 peak_multiplier=trade.get("peak_multiplier", 1.0),
                 exit_reason=reason,
-                exit_timestamp=trade.get("closed_timestamp", time.time()),
+                exit_timestamp=now,
             )
 
         self.sales_history.append({
