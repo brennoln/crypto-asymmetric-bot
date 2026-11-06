@@ -31,3 +31,6 @@ Thumbs.db
 
 repomix-output.xml
 tmp_bench.py
+
+data/backtest_candles/
+data/backtest_candles_10d/
